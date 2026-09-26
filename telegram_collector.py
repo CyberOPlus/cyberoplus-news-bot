@@ -164,37 +164,26 @@ def extract_photo_url(style: str | None) -> str | None:
 
 
 def extract_image_urls(node) -> list[str]:
-    """Extract Telegram-hosted image URLs from all common public-preview media shapes."""
+    """Extract only real photo media attached to the Telegram message."""
     urls: list[str] = []
 
-    selectors = [
-        ".tgme_widget_message_photo_wrap",
-        ".tgme_widget_message_service_photo",
-        ".tgme_widget_message_link_preview",
-        ".tgme_widget_message_webpage_wrap",
-        "[style*='background-image']",
-    ]
+    # Telegram's public preview uses this class for ordinary photos and for
+    # each photo inside grouped albums. Restricting extraction to these nodes
+    # avoids avatars, link-preview thumbnails and decorative backgrounds.
+    for media_node in node.select(
+        ".tgme_widget_message_photo_wrap, .tgme_widget_message_service_photo"
+    ):
+        style_url = extract_photo_url(str(media_node.get("style", "")))
+        if style_url and style_url not in urls:
+            urls.append(style_url)
 
-    for selector in selectors:
-        for media_node in node.select(selector):
-            style_url = extract_photo_url(str(media_node.get("style", "")))
-            if style_url and style_url not in urls:
-                urls.append(style_url)
-
-            for image in media_node.select("img[src]"):
-                src = str(image.get("src", "")).strip()
-                if src.startswith(("http://", "https://")) and src not in urls:
-                    urls.append(src)
-
-    # Some Telegram previews expose media as <img> without a background-image.
-    for image in node.select("img[src]"):
-        src = str(image.get("src", "")).strip()
-        if (
-            src.startswith(("http://", "https://"))
-            and ("telesco.pe/" in src or "telegram" in src)
-            and src not in urls
-        ):
-            urls.append(src)
+        for image in media_node.select("img[src]"):
+            image_url = str(image.get("src", "")).strip()
+            if (
+                image_url.startswith(("http://", "https://"))
+                and image_url not in urls
+            ):
+                urls.append(image_url)
 
     return urls
 
