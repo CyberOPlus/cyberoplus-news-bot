@@ -163,6 +163,42 @@ def extract_photo_url(style: str | None) -> str | None:
     return match.group(1) if match else None
 
 
+def extract_image_urls(node) -> list[str]:
+    """Extract Telegram-hosted image URLs from all common public-preview media shapes."""
+    urls: list[str] = []
+
+    selectors = [
+        ".tgme_widget_message_photo_wrap",
+        ".tgme_widget_message_service_photo",
+        ".tgme_widget_message_link_preview",
+        ".tgme_widget_message_webpage_wrap",
+        "[style*='background-image']",
+    ]
+
+    for selector in selectors:
+        for media_node in node.select(selector):
+            style_url = extract_photo_url(str(media_node.get("style", "")))
+            if style_url and style_url not in urls:
+                urls.append(style_url)
+
+            for image in media_node.select("img[src]"):
+                src = str(image.get("src", "")).strip()
+                if src.startswith(("http://", "https://")) and src not in urls:
+                    urls.append(src)
+
+    # Some Telegram previews expose media as <img> without a background-image.
+    for image in node.select("img[src]"):
+        src = str(image.get("src", "")).strip()
+        if (
+            src.startswith(("http://", "https://"))
+            and ("telesco.pe/" in src or "telegram" in src)
+            and src not in urls
+        ):
+            urls.append(src)
+
+    return urls
+
+
 def fetch_page(before: int | None = None) -> str:
     url = PUBLIC_URL if before is None else f"{PUBLIC_URL}?before={before}"
     response = requests.get(url, headers=HEADERS, timeout=TIMEOUT_SECONDS)
@@ -194,13 +230,14 @@ def parse_messages(html: str) -> list[dict[str, Any]]:
         all_links: list[str] = []
         external_links: list[str] = []
 
-        if text_node:
-            for anchor in text_node.select("a[href]"):
-                href = str(anchor.get("href", "")).strip()
-                if href.startswith(("http://", "https://")) and href not in all_links:
-                    all_links.append(href)
-                if is_external_source(href) and href not in external_links:
-                    external_links.append(href)
+        # Scan the full message node, not only the text block, because Telegram
+        # often puts the original-source URL inside a link-preview card.
+        for anchor in node.select("a[href]"):
+            href = str(anchor.get("href", "")).strip()
+            if href.startswith(("http://", "https://")) and href not in all_links:
+                all_links.append(href)
+            if is_external_source(href) and href not in external_links:
+                external_links.append(href)
 
         # Also capture bare URLs Telegram may not have wrapped as anchors.
         for bare_url in URL_RE.findall(raw_text):
@@ -210,12 +247,8 @@ def parse_messages(html: str) -> list[dict[str, Any]]:
             if is_external_source(bare_url) and bare_url not in external_links:
                 external_links.append(bare_url)
 
-        photo_node = node.select_one(".tgme_widget_message_photo_wrap")
-        image_url = (
-            extract_photo_url(str(photo_node.get("style", "")))
-            if photo_node
-            else None
-        )
+        image_urls = extract_image_urls(node)
+        image_url = image_urls[0] if image_urls else None
 
         has_video = node.select_one(
             ".tgme_widget_message_video_player, "
@@ -233,8 +266,9 @@ def parse_messages(html: str) -> list[dict[str, Any]]:
                 "clean_text": clean_text(raw_text),
                 "all_links": all_links,
                 "source_links": external_links,
-                "has_image": image_url is not None,
+                "has_image": bool(image_urls),
                 "image_url": image_url,
+                "image_urls": image_urls,
                 "has_video": has_video,
                 "has_document": has_document,
                 "status": "collected",
