@@ -71,9 +71,10 @@ def upload_photo(page_id,token,url):
     p=api("POST",f"{page_id}/photos",token,data={"url":url,"published":"false"})
     return str(p.get("id") or "")
 
-def publish(page_id,token,message,photo_id=""):
+def publish(page_id,token,message,photo_ids=None):
     data={"message":message}
-    if photo_id: data["attached_media[0]"]=json.dumps({"media_fbid":photo_id})
+    for index, photo_id in enumerate((photo_ids or [])[:10]):
+        data[f"attached_media[{index}]"]=json.dumps({"media_fbid":photo_id})
     p=api("POST",f"{page_id}/feed",token,data=data)
     return str(p.get("id") or "")
 
@@ -104,19 +105,32 @@ def main():
         if not message: raise RuntimeError("Ready item has no text")
 
         media=item.get("media") or {}
-        image_url=str(media.get("image_url") or "").strip()
-        photo_id=""; media_mode="text"; media_error=""
-        if image_url:
+        image_urls=[
+            str(url).strip()
+            for url in (media.get("image_urls") or [])
+            if str(url).strip()
+        ]
+        if not image_urls and str(media.get("image_url") or "").strip():
+            image_urls=[str(media.get("image_url")).strip()]
+
+        photo_ids=[]
+        media_mode="text"
+        media_errors=[]
+        for image_url in image_urls[:10]:
             try:
                 photo_id=upload_photo(page_id,token,image_url)
-                media_mode="image"
+                if photo_id:
+                    photo_ids.append(photo_id)
             except Exception as exc:
-                media_error=str(exc)
-                print(f"WARNING image fallback: {exc}",file=sys.stderr)
+                media_errors.append(str(exc))
+                print(f"WARNING image upload failed for one image: {exc}",file=sys.stderr)
 
-        post_id=publish(page_id,token,message,photo_id)
+        if photo_ids:
+            media_mode="images" if len(photo_ids)>1 else "image"
+
+        post_id=publish(page_id,token,message,photo_ids)
         first_comment=str(item.get("first_comment") or "").strip()
-        append_event({"event":"published","telegram_id":tid,"facebook_post_id":post_id,"published_at":now_iso(),"first_comment":first_comment,"source_url":item.get("source_url") or "","media_mode":media_mode,"media_error":media_error})
+        append_event({"event":"published","telegram_id":tid,"facebook_post_id":post_id,"published_at":now_iso(),"first_comment":first_comment,"source_url":item.get("source_url") or "","media_mode":media_mode,"media_errors":media_errors})
 
         comment_status="none"
         if first_comment:
