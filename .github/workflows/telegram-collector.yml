@@ -1,4 +1,4 @@
-name: Telegram collector
+name: Telegram to Facebook ready queue
 
 on:
   workflow_dispatch:
@@ -9,6 +9,9 @@ on:
       - main
     paths:
       - "telegram_collector.py"
+      - "ai_batch_processor.py"
+      - "ai_rewriter.py"
+      - "prompts/facebook_ar.txt"
       - "requirements.txt"
       - ".github/workflows/telegram-collector.yml"
 
@@ -16,13 +19,13 @@ permissions:
   contents: write
 
 concurrency:
-  group: telegram-collector
+  group: telegram-facebook-pipeline
   cancel-in-progress: false
 
 jobs:
-  collect:
+  collect-and-prepare:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -42,16 +45,22 @@ jobs:
       - name: Collect every new Telegram post
         run: python telegram_collector.py
 
-      - name: Persist collector state and inbox
+      - name: Prepare every unprocessed item in Arabic
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3-flash-preview
+        run: python ai_batch_processor.py
+
+      - name: Persist inbox, AI state and ready queue
         shell: bash
         run: |
-          if git diff --quiet -- data/state.json data/inbox.jsonl; then
-            echo "No new Telegram posts to persist."
+          if git diff --quiet -- data/state.json data/inbox.jsonl data/ai_state.json data/ready.jsonl; then
+            echo "No pipeline changes to persist."
             exit 0
           fi
 
           git config user.name "cyberoplus-news-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add data/state.json data/inbox.jsonl
-          git commit -m "Collect new Telegram posts"
+          git add data/state.json data/inbox.jsonl data/ai_state.json data/ready.jsonl
+          git commit -m "Collect and prepare new Facebook posts"
           git push
