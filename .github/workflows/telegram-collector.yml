@@ -1,4 +1,4 @@
-name: Telegram to Facebook ready queue
+name: Telegram to Facebook publisher
 
 on:
   workflow_dispatch:
@@ -11,6 +11,7 @@ on:
       - "telegram_collector.py"
       - "ai_batch_processor.py"
       - "ai_rewriter.py"
+      - "facebook_publisher.py"
       - "prompts/facebook_ar.txt"
       - "requirements.txt"
       - ".github/workflows/telegram-collector.yml"
@@ -23,9 +24,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  collect-and-prepare:
+  collect-prepare-publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 12
 
     steps:
       - name: Checkout repository
@@ -51,16 +52,25 @@ jobs:
           GEMINI_MODEL: gemini-3-flash-preview
         run: python ai_batch_processor.py
 
-      - name: Persist inbox, AI state and ready queue
+      - name: Publish next ready item to Facebook
+        env:
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+          FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
+          META_GRAPH_VERSION: v26.0
+          FACEBOOK_MIN_GAP_MINUTES: 12
+        run: python facebook_publisher.py
+
+      - name: Persist pipeline state
+        if: always()
         shell: bash
         run: |
-          if git diff --quiet -- data/state.json data/inbox.jsonl data/ai_state.json data/ready.jsonl; then
+          if git diff --quiet -- data/state.json data/inbox.jsonl data/ai_state.json data/ready.jsonl data/facebook_events.jsonl; then
             echo "No pipeline changes to persist."
             exit 0
           fi
 
           git config user.name "cyberoplus-news-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add data/state.json data/inbox.jsonl data/ai_state.json data/ready.jsonl
-          git commit -m "Collect and prepare new Facebook posts"
+          git add data/state.json data/inbox.jsonl data/ai_state.json data/ready.jsonl data/facebook_events.jsonl
+          git commit -m "Persist Facebook publishing pipeline state"
           git push
