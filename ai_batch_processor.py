@@ -114,6 +114,9 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
                 "media": {
                     "has_image": bool(raw_item.get("has_image")),
                     "image_url": raw_item.get("image_url"),
+                    "image_urls": raw_item.get("image_urls") or (
+                        [raw_item.get("image_url")] if raw_item.get("image_url") else []
+                    ),
                     "has_video": bool(raw_item.get("has_video")),
                     "has_document": bool(raw_item.get("has_document")),
                 },
