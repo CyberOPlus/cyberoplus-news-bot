@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "platform": "Threads",
+  "purpose": "reference_only_do_not_use_for_facebook_scheduling",
+  "source": "Threads Insights screenshots supplied by owner",
+  "timezone": "WET",
+  "audience_snapshot": {
+    "period": "last_90_days",
+    "viewers": 6770000,
+    "followers_viewers": 766,
+    "non_followers_viewers": 6770000,
+    "countries_percent": {
+      "United States": 34.72,
+      "Morocco": 11.28,
+      "India": 5.11,
+      "United Kingdom": 3.77,
+      "Italy": 2.89
+    }
+  },
+  "observed_peak_windows": [
+    {"weekday":"Sunday","start":"15:00","end":"18:00","active_viewers":605200},
+    {"weekday":"Monday","start":"15:00","end":"18:00","active_viewers":604600},
+    {"weekday":"Saturday","start":"16:00","end":"19:00","active_viewers":573000}
+  ]
+}
