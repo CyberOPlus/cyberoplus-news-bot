@@ -75,6 +75,11 @@ OUTPUT_SCHEMA = {
         "first_comment": {"type": "string"},
         "language": {"type": "string"},
         "source_url": {"type": "string"},
+        "card_title": {"type": "string"},
+        "link_role": {
+            "type": "string",
+            "enum": ["source", "tool", "download", "project", "more_info", "none"]
+        },
     },
     "required": [
         "title",
@@ -82,6 +87,8 @@ OUTPUT_SCHEMA = {
         "first_comment",
         "language",
         "source_url",
+        "card_title",
+        "link_role",
     ],
     "additionalProperties": False,
 }
@@ -337,15 +344,36 @@ def enforce_source_policy(
     source_url = _canonical_source_link(allowed_links)
     note = str(source_note or "").strip()
 
+    role = str(result.get("link_role") or "none").strip()
+    if role not in {"source", "tool", "download", "project", "more_info", "none"}:
+        role = "source" if source_url else "none"
+
+    if note and role == "none":
+        role = "source"
+
     result["source_url"] = source_url
+    result["link_role"] = role
+
+    labels = {
+        "source": "المصدر",
+        "tool": "الأداة",
+        "download": "رابط التحميل",
+        "project": "المشروع",
+        "more_info": "الرابط",
+    }
+
     if note and source_url:
-        result["first_comment"] = f"المصدر: {note}\\n{source_url}"
+        label = labels.get(role, "المصدر")
+        result["first_comment"] = f"{label}: {note}\\n{source_url}"
     elif note:
-        result["first_comment"] = f"المصدر: {note}"
+        label = labels.get(role, "المصدر")
+        result["first_comment"] = f"{label}: {note}"
     elif source_url:
-        result["first_comment"] = f"المصدر: {source_url}"
+        label = labels.get(role, "المصدر")
+        result["first_comment"] = f"{label}: {source_url}"
     else:
         result["first_comment"] = ""
+        result["link_role"] = "none"
 
     if not has_explicit_title:
         result["title"] = ""
@@ -374,6 +402,23 @@ def enforce_source_policy(
         value = re.sub(r"\\n{3,}", "\\n\\n", value).strip()
         result[field] = isolate_latin_runs_rtl(value)
 
+    # The link itself lives in the first comment. Add one short contextual cue
+    # only when a link exists, so readers know where to find the referenced item.
+    if source_url:
+        cue = {
+            "source": "المصدر خليتو ليكم فالتعليق الأول.",
+            "tool": "الأداة خليتها ليكم فالتعليق الأول.",
+            "download": "رابط التحميل خليتو ليكم فالتعليق الأول.",
+            "project": "رابط المشروع خليتو ليكم فالتعليق الأول.",
+            "more_info": "الرابط خليتو ليكم فالتعليق الأول.",
+        }.get(result["link_role"], "الرابط خليتو ليكم فالتعليق الأول.")
+        body = str(result.get("facebook_post") or "").strip()
+        if cue not in body:
+            result["facebook_post"] = (body + "\\n\\n" + cue).strip()
+
+    card_title = str(result.get("card_title") or "").strip()
+    card_title = re.sub(r"\\s+", " ", card_title)
+    result["card_title"] = isolate_latin_runs_rtl(card_title[:140])
     result["language"] = "ary"
     return result
 
