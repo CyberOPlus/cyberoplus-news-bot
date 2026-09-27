@@ -294,7 +294,16 @@ def isolate_latin_runs_rtl(text: str) -> str:
         placeholders[key] = match.group(0)
         return key
 
-    protected = URL_RE.sub(stash_url, text)
+    # Models sometimes emit FSI/PDI themselves. Normalize first so we wrap once.
+    normalized = (
+        text.replace("\u2066", "")
+        .replace("\u2067", "")
+        .replace("\u2068", "")
+        .replace("\u2069", "")
+        .replace("\u200e", "")
+        .replace("\u200f", "")
+    )
+    protected = URL_RE.sub(stash_url, normalized)
 
     def wrap(match: re.Match[str]) -> str:
         value = match.group(1)
