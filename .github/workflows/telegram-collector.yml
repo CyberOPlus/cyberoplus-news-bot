@@ -4,20 +4,8 @@ name: Telegram to Facebook publisher
 on:
   workflow_dispatch:
   schedule:
-    - cron: "2-57/5 * * * *"
-  push:
-    branches:
-      - main
-    paths:
-      - "telegram_collector.py"
-      - "ai_batch_processor.py"
-      - "ai_rewriter.py"
-      - "facebook_publisher.py"
-      - "image_resolver.py"
-      - "video_processor.py"
-      - "prompts/facebook_ar.txt"
-      - "requirements.txt"
-      - ".github/workflows/telegram-collector.yml"
+    # 24 runs/day instead of 288. Minute 47 avoids the busiest top-of-hour window.
+    - cron: "47 * * * *"
 
 permissions:
   contents: write
@@ -37,19 +25,31 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Cheap preflight — skip idle runs
+        id: probe
+        run: python pipeline_probe.py
+
+      - name: Idle — nothing to collect, retry or publish
+        if: steps.probe.outputs.needs_run != 'true'
+        run: echo "Pipeline is up to date. Expensive setup skipped."
+
       - name: Set up Python
+        if: steps.probe.outputs.needs_run == 'true'
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: "pip"
 
       - name: Install dependencies
+        if: steps.probe.outputs.needs_run == 'true'
         run: python -m pip install -r requirements.txt
 
       - name: Collect every new Telegram post
+        if: steps.probe.outputs.needs_run == 'true'
         run: python telegram_collector.py
 
       - name: Prepare every unprocessed item in Arabic
+        if: steps.probe.outputs.needs_run == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODELS: gemini-3.7-flash,gemini-3.5-flash
@@ -60,6 +60,7 @@ jobs:
         run: python ai_batch_processor.py
 
       - name: Install FFmpeg only when the next post needs video
+        if: steps.probe.outputs.needs_run == 'true'
         shell: bash
         run: |
           if python - <<'PY'
@@ -98,6 +99,7 @@ jobs:
           fi
 
       - name: Publish next ready item to Facebook
+        if: steps.probe.outputs.needs_run == 'true'
         env:
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
@@ -106,7 +108,7 @@ jobs:
         run: python facebook_publisher.py
 
       - name: Persist pipeline state
-        if: always()
+        if: always() && steps.probe.outputs.needs_run == 'true'
         shell: bash
         run: |
           if git diff --quiet -- data/state.json data/inbox.jsonl data/ai_state.json data/ready.jsonl data/facebook_events.jsonl; then
@@ -120,3 +122,11 @@ jobs:
           git commit -m "Persist Facebook publishing pipeline state"
           git pull --rebase origin main
           git push
+
+      - name: Pipeline budget summary
+        if: always()
+        run: |
+          echo "### Cybero Plus pipeline" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Preflight: \`${{ steps.probe.outputs.reason }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Full pipeline ran: \`${{ steps.probe.outputs.needs_run }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Schedule: once per hour at minute 47 UTC" >> "$GITHUB_STEP_SUMMARY"

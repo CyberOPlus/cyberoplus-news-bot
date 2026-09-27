@@ -788,7 +788,13 @@ def _call_one_gemini(
             "temperature": 0.15,
             "maxOutputTokens": 2048,
             "responseMimeType": "application/json",
-            "responseSchema": OUTPUT_SCHEMA,
+            # Gemini currently rejects JSON Schema's additionalProperties key.
+            # Keep it in OUTPUT_SCHEMA for local validation, but omit it here.
+            "responseSchema": {
+                key: value
+                for key, value in OUTPUT_SCHEMA.items()
+                if key != "additionalProperties"
+            },
             "thinkingConfig": {"thinkingLevel": "low"},
         },
     }
