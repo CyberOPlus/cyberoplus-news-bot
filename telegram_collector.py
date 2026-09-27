@@ -216,6 +216,14 @@ def parse_messages(html: str) -> list[dict[str, Any]]:
         time_node = node.select_one("time")
         published_at = str(time_node.get("datetime")) if time_node else None
 
+        reply_to_id = None
+        reply_node = node.select_one(".tgme_widget_message_reply[href]")
+        if reply_node:
+            reply_href = str(reply_node.get("href", ""))
+            match = re.search(r"/(\\d+)(?:\\?.*)?$", reply_href)
+            if match:
+                reply_to_id = int(match.group(1))
+
         all_links: list[str] = []
         external_links: list[str] = []
 
@@ -250,6 +258,7 @@ def parse_messages(html: str) -> list[dict[str, Any]]:
             {
                 "telegram_id": post_id,
                 "published_at": published_at,
+                "reply_to_id": reply_to_id,
                 "collected_at": now_iso(),
                 "raw_text": raw_text,
                 "clean_text": clean_text(raw_text),
@@ -344,6 +353,7 @@ def main() -> int:
                 {
                     "telegram_id": item["telegram_id"],
                     "published_at": item["published_at"],
+                    "reply_to_id": item.get("reply_to_id"),
                     "clean_text": item["clean_text"],
                     "source_links": item["source_links"],
                     "has_image": item["has_image"],
