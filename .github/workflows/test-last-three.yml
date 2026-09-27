@@ -1,3 +1,4 @@
+# One-time live validation after cleanup
 name: Test latest three Facebook posts
 
 on:
