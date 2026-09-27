@@ -232,6 +232,16 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
                 "source_url": result["source_url"],
                 "card_title": result.get("card_title", ""),
                 "link_role": result.get("link_role", "none"),
+                "editorial": {
+                    "content_type": result.get("content_type", "general"),
+                    "attention_label": result.get("attention_label", "none"),
+                    "attention_evidence": result.get("attention_evidence", ""),
+                    "certainty": result.get("certainty", "confirmed"),
+                    "main_fact": result.get("main_fact", ""),
+                    "supporting_facts": result.get("supporting_facts", []),
+                    "protected_entities": result.get("protected_entities", []),
+                    "protected_numbers": result.get("protected_numbers", []),
+                },
                 "media": {
                     "has_image": bool(raw_item.get("has_image")),
                     "image_url": raw_item.get("image_url"),
