@@ -198,6 +198,8 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
             "facebook_post": "",
             "first_comment": "",
             "source_url": "",
+            "card_title": "",
+            "link_role": "none",
             "media": {
                 "has_image": bool(raw_item.get("has_image")),
                 "image_url": raw_item.get("image_url"),
@@ -228,6 +230,8 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
                 "facebook_post": result["facebook_post"],
                 "first_comment": result["first_comment"],
                 "source_url": result["source_url"],
+                "card_title": result.get("card_title", ""),
+                "link_role": result.get("link_role", "none"),
                 "media": {
                     "has_image": bool(raw_item.get("has_image")),
                     "image_url": raw_item.get("image_url"),
