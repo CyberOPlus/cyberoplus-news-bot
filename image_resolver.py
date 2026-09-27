@@ -20,6 +20,8 @@ from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import requests
+import arabic_reshaper
+from bidi.algorithm import get_display
 from bs4 import BeautifulSoup
 from PIL import Image, ImageOps, ImageDraw, ImageFont
 
@@ -350,64 +352,140 @@ def normalize_for_facebook(asset: ImageAsset) -> ImageAsset:
     )
 
 
-def build_branded_fallback_asset(seed_text: str = "") -> ImageAsset:
-    """Create a clean Cybero Plus visual when no real/source image is available.
+def _rtl_display(text: str) -> str:
+    """Shape Arabic and resolve mixed Arabic/Latin text for Pillow."""
+    value = (text or "").strip()
+    if not value:
+        return ""
+    try:
+        return get_display(arabic_reshaper.reshape(value))
+    except Exception:
+        return value
 
-    This is deliberately the last resort: Telegram media and the original
-    source image always win. It guarantees Facebook never receives a text-only
-    post from the bot.
-    """
+
+def _wrap_rtl_title(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+    max_width: int,
+    max_lines: int = 4,
+) -> list[str]:
+    words = [word for word in (text or "").split() if word]
+    if not words:
+        return []
+
+    lines: list[str] = []
+    current: list[str] = []
+
+    for word in words:
+        candidate = " ".join(current + [word])
+        display = _rtl_display(candidate)
+        bbox = draw.textbbox((0, 0), display, font=font)
+        width = bbox[2] - bbox[0]
+
+        if current and width > max_width:
+            lines.append(" ".join(current))
+            current = [word]
+        else:
+            current.append(word)
+
+        if len(lines) >= max_lines:
+            break
+
+    if current and len(lines) < max_lines:
+        lines.append(" ".join(current))
+
+    # If text was truncated by line count, mark it cleanly.
+    consumed = sum(len(line.split()) for line in lines)
+    if consumed < len(words) and lines:
+        lines[-1] = lines[-1].rstrip("…") + "…"
+
+    return lines[:max_lines]
+
+
+def build_branded_fallback_asset(title: str = "") -> ImageAsset:
+    """Simple black Cybero Plus card with a yellow frame and large white title."""
     width, height = 1200, 630
-    image = Image.new("RGB", (width, height), (10, 10, 10))
+    black = (8, 8, 8)
+    yellow = (250, 204, 0)
+    white = (248, 248, 248)
+    muted = (190, 190, 190)
+
+    image = Image.new("RGB", (width, height), black)
     draw = ImageDraw.Draw(image)
 
-    gold = (245, 196, 0)
-    white = (245, 245, 245)
-    dark2 = (24, 24, 24)
-
-    # Editorial geometric background: clean, branded, not a fake news photo.
-    draw.rectangle((0, 0, width, height), fill=(10, 10, 10))
-    draw.polygon(
-        [(720, 0), (1200, 0), (1200, 360), (930, 285)],
-        fill=dark2,
+    # Simple yellow frame, exactly as the fallback identity.
+    border = 14
+    draw.rectangle(
+        (border, border, width - border - 1, height - border - 1),
+        outline=yellow,
+        width=8,
     )
-    draw.polygon(
-        [(0, 470), (430, 360), (680, 630), (0, 630)],
-        fill=(18, 18, 18),
-    )
-    draw.rectangle((0, 0, 14, height), fill=gold)
-    draw.rectangle((80, 105, 250, 117), fill=gold)
 
     try:
-        brand_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 76)
-        small_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 30)
+        title_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 66)
+        brand_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 28)
+        tiny_font = ImageFont.truetype("DejaVuSans.ttf", 22)
     except OSError:
+        title_font = ImageFont.load_default()
         brand_font = ImageFont.load_default()
-        small_font = ImageFont.load_default()
+        tiny_font = ImageFont.load_default()
 
-    draw.text((80, 145), "C+", fill=gold, font=brand_font)
-    draw.text((215, 167), "CYBERO PLUS", fill=white, font=small_font)
-    draw.text((82, 255), "CYBER / TECH UPDATE", fill=white, font=small_font)
+    clean_title = re.sub(r"\s+", " ", (title or "").strip())
+    if not clean_title:
+        clean_title = "تحديث جديد من Cybero Plus"
 
-    # A deterministic accent pattern from the story text so fallback visuals
-    # are not pixel-identical across different posts.
-    checksum = sum(ord(ch) for ch in (seed_text or "")) % 7
-    for index in range(4):
-        x = 820 + index * 62
-        y = 400 - ((checksum + index * 2) % 5) * 28
-        draw.rectangle((x, y, x + 28, 545), fill=gold if index % 2 == 0 else white)
+    lines = _wrap_rtl_title(
+        draw,
+        clean_title,
+        title_font,
+        max_width=940,
+        max_lines=4,
+    )
+
+    line_gap = 20
+    heights: list[int] = []
+    displays: list[str] = []
+    for line in lines:
+        display = _rtl_display(line)
+        displays.append(display)
+        bbox = draw.textbbox((0, 0), display, font=title_font)
+        heights.append(max(1, bbox[3] - bbox[1]))
+
+    total_height = sum(heights)
+    if heights:
+        total_height += line_gap * (len(heights) - 1)
+
+    y = max(130, (height - total_height) // 2 - 10)
+    right_x = width - 110
+
+    for display, line_height in zip(displays, heights):
+        bbox = draw.textbbox((0, 0), display, font=title_font)
+        line_width = bbox[2] - bbox[0]
+        draw.text(
+            (right_x - line_width, y),
+            display,
+            fill=white,
+            font=title_font,
+        )
+        y += line_height + line_gap
+
+    # Minimal brand only; no decorative chart or busy background.
+    draw.text((70, 55), "C+", fill=yellow, font=brand_font)
+    draw.text((128, 58), "CYBERO PLUS", fill=white, font=brand_font)
+    draw.text((70, height - 68), "CyberoPlus.com", fill=muted, font=tiny_font)
 
     output = io.BytesIO()
-    image.save(output, format="JPEG", quality=95, optimize=True, subsampling=0)
+    image.save(output, format="JPEG", quality=96, optimize=True, subsampling=0)
     content = output.getvalue()
 
     return ImageAsset(
-        url="generated://cyberoplus-fallback",
+        url="generated://cyberoplus-simple-card",
         content=content,
         mime="image/jpeg",
         width=width,
         height=height,
-        filename="cyberoplus-fallback.jpg",
+        filename="cyberoplus-news-card.jpg",
         origin="generated_fallback",
         score=float(width * height),
     )
