@@ -39,8 +39,6 @@ OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_GEMINI_MODELS = (
     "gemini-3.7-flash",
     "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite",
 )
 DEFAULT_GROQ_MODELS = (
     "qwen/qwen3.8-27b",
@@ -404,6 +402,9 @@ def enforce_source_policy(
             if url:
                 value = value.replace(str(url), "")
 
+        value = re.sub(r"(?i)\bBREAKING\s*:", "عاجل:", value)
+        value = re.sub(r"(?i)\bALERT\s*:", "تنبيه:", value)
+        value = re.sub(r"(?i)\bURGENT\s*:", "عاجل:", value)
         value = re.sub(r"[ \t]{2,}", " ", value)
         value = re.sub(r"\n{3,}", "\n\n", value).strip()
         result[field] = isolate_latin_runs_rtl(value)
@@ -586,7 +587,6 @@ def _provider_attempts(item: dict[str, Any]):
             "GROQ_MODEL",
             DEFAULT_GROQ_MODELS,
         ):
-            # Translation does not need deep chain-of-thought.
             effort = "none" if model.startswith("qwen/") else "low"
             yield (
                 f"groq/{model}",
@@ -598,6 +598,18 @@ def _provider_attempts(item: dict[str, Any]):
                     item=item,
                     strict_schema=True,
                     reasoning_effort=effort,
+                ),
+            )
+
+    # Keep lighter Gemini models as later fallbacks, after stronger Groq models.
+    if gemini_key:
+        for model in ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite"):
+            yield (
+                f"gemini/{model}",
+                lambda model=model: _call_one_gemini(
+                    item,
+                    gemini_key,
+                    model,
                 ),
             )
 
