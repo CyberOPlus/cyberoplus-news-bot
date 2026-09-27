@@ -15,7 +15,10 @@ from __future__ import annotations
 import io
 import json
 import re
+import zlib
 from dataclasses import dataclass
+from itertools import combinations
+from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -365,9 +368,38 @@ def normalize_for_facebook(asset: ImageAsset) -> ImageAsset:
     )
 
 
+ROOT = Path(__file__).resolve().parent
+CARD_BACKGROUNDS_PATH = ROOT / "assets" / "card-backgrounds.webp"
+
+# Cairo is fetched only when a generated fallback card is needed. If the
+# network fetch fails, rendering falls back to DejaVu instead of blocking a post.
+CAIRO_FONT_URL = (
+    "https://raw.githubusercontent.com/google/fonts/main/ofl/cairo/"
+    "Cairo%5Bslnt%2Cwght%5D.ttf"
+)
+_CAIRO_FONT_BYTES: bytes | None = None
+_CAIRO_FONT_DOWNLOAD_FAILED = False
+
+CARD_TEXT_COLORS = (
+    (248, 248, 248),  # white
+    (255, 213, 74),   # warm yellow
+    (88, 196, 255),   # light blue
+    (255, 107, 107),  # light red
+)
+
+DIRECTION_CONTROLS = "\u2066\u2067\u2068\u2069\u200e\u200f"
+
+
+def _strip_direction_controls(text: str) -> str:
+    value = str(text or "")
+    for mark in DIRECTION_CONTROLS:
+        value = value.replace(mark, "")
+    return value
+
+
 def _rtl_display(text: str) -> str:
-    """Shape Arabic and resolve mixed Arabic/Latin text for Pillow."""
-    value = (text or "").strip()
+    """Legacy fallback for Pillow builds without libraqm."""
+    value = _strip_direction_controls(text).strip()
     if not value:
         return ""
     try:
@@ -376,129 +408,326 @@ def _rtl_display(text: str) -> str:
         return value
 
 
-def _wrap_rtl_title(
+def _variant_index(title: str, variant_key: int | str | None) -> int:
+    if variant_key is not None:
+        try:
+            return int(variant_key) % 4
+        except (TypeError, ValueError):
+            pass
+    return zlib.crc32(str(title or "").encode("utf-8")) % 4
+
+
+def _load_card_background(index: int) -> Image.Image:
+    """Crop one of the four owner-supplied templates from the compact sprite."""
+    try:
+        with Image.open(CARD_BACKGROUNDS_PATH) as sprite:
+            sprite = sprite.convert("RGB")
+            tile_w = sprite.width // 2
+            tile_h = sprite.height // 2
+            left = (index % 2) * tile_w
+            top = (index // 2) * tile_h
+            card = sprite.crop((left, top, left + tile_w, top + tile_h))
+            return card.resize((1600, 900), Image.Resampling.LANCZOS)
+    except Exception:
+        # Do not block publication only because a visual asset failed.
+        colors = ((25, 132, 255), (255, 45, 45), (245, 245, 245), (255, 204, 0))
+        image = Image.new("RGB", (1600, 900), (4, 4, 4))
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle(
+            (34, 82, 1566, 825),
+            radius=90,
+            outline=colors[index % 4],
+            width=8,
+        )
+        return image
+
+
+def _get_cairo_font_bytes() -> bytes | None:
+    global _CAIRO_FONT_BYTES, _CAIRO_FONT_DOWNLOAD_FAILED
+
+    if _CAIRO_FONT_BYTES is not None:
+        return _CAIRO_FONT_BYTES
+    if _CAIRO_FONT_DOWNLOAD_FAILED:
+        return None
+
+    try:
+        response = requests.get(
+            CAIRO_FONT_URL,
+            headers={"User-Agent": HEADERS["User-Agent"]},
+            timeout=15,
+        )
+        response.raise_for_status()
+        content = response.content
+        if len(content) < 20_000:
+            raise RuntimeError("Cairo font download was unexpectedly small.")
+        _CAIRO_FONT_BYTES = content
+        return content
+    except Exception:
+        _CAIRO_FONT_DOWNLOAD_FAILED = True
+        return None
+
+
+def _set_heavy_variation(font: ImageFont.FreeTypeFont) -> None:
+    """Prefer an ExtraBold-like Cairo weight when the variable font exposes axes."""
+    try:
+        axes = font.get_variation_axes()
+        values = []
+        for axis in axes:
+            name = axis.get("name", b"")
+            if isinstance(name, bytes):
+                name = name.decode("utf-8", "ignore")
+            minimum = float(axis.get("minimum", 0))
+            maximum = float(axis.get("maximum", 1000))
+            default = float(axis.get("default", minimum))
+            lowered = str(name).lower()
+            if "weight" in lowered:
+                values.append(min(max(800.0, minimum), maximum))
+            elif "slant" in lowered:
+                values.append(min(max(0.0, minimum), maximum))
+            else:
+                values.append(default)
+        if values:
+            font.set_variation_by_axes(values)
+    except Exception:
+        pass
+
+
+def _load_title_font(size: int) -> tuple[ImageFont.FreeTypeFont, bool]:
+    font_bytes = _get_cairo_font_bytes()
+    if font_bytes:
+        try:
+            font = ImageFont.truetype(io.BytesIO(font_bytes), size=size)
+            _set_heavy_variation(font)
+            return font, True
+        except Exception:
+            pass
+
+    for fallback in ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf"):
+        try:
+            return ImageFont.truetype(fallback, size=size), False
+        except OSError:
+            continue
+    return ImageFont.load_default(), False
+
+
+def _native_bbox(
     draw: ImageDraw.ImageDraw,
     text: str,
     font: ImageFont.FreeTypeFont,
+) -> tuple[int, int, int, int] | None:
+    try:
+        return draw.textbbox(
+            (0, 0),
+            text,
+            font=font,
+            direction="rtl",
+            language="ar",
+        )
+    except Exception:
+        return None
+
+
+def _line_metrics(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font: ImageFont.FreeTypeFont,
+) -> tuple[int, int, bool]:
+    """Measure exactly the RTL layout that will be drawn."""
+    clean = _strip_direction_controls(text).strip()
+    bbox = _native_bbox(draw, clean, font)
+    if bbox is not None:
+        return max(1, bbox[2] - bbox[0]), max(1, bbox[3] - bbox[1]), True
+
+    legacy = _rtl_display(clean)
+    bbox = draw.textbbox((0, 0), legacy, font=font)
+    return max(1, bbox[2] - bbox[0]), max(1, bbox[3] - bbox[1]), False
+
+
+def _split_words(words: list[str], cuts: tuple[int, ...]) -> list[str]:
+    points = (0,) + cuts + (len(words),)
+    return [
+        " ".join(words[points[i] : points[i + 1]])
+        for i in range(len(points) - 1)
+    ]
+
+
+def _balanced_lines(
+    draw: ImageDraw.ImageDraw,
+    words: list[str],
+    font: ImageFont.FreeTypeFont,
     max_width: int,
-    max_lines: int = 4,
-) -> list[str]:
-    words = [word for word in (text or "").split() if word]
+    line_count: int,
+) -> tuple[list[str], list[int], list[int], bool] | None:
+    if not words or line_count < 1 or line_count > len(words):
+        return None
+
+    best = None
+    for cuts in combinations(range(1, len(words)), line_count - 1):
+        lines = _split_words(words, cuts)
+        widths: list[int] = []
+        heights: list[int] = []
+        native = True
+        valid = True
+
+        for line in lines:
+            width, height, line_native = _line_metrics(draw, line, font)
+            if width > max_width:
+                valid = False
+                break
+            widths.append(width)
+            heights.append(height)
+            native = native and line_native
+
+        if not valid:
+            continue
+
+        average = sum(widths) / len(widths)
+        balance = sum(abs(width - average) for width in widths)
+        last_line_penalty = max(0.0, average * 0.58 - widths[-1]) * 1.7
+        score = balance + last_line_penalty
+
+        if best is None or score < best[0]:
+            best = (score, lines, widths, heights, native)
+
+    if best is None:
+        return None
+    return best[1], best[2], best[3], best[4]
+
+
+def _fit_title(
+    draw: ImageDraw.ImageDraw,
+    title: str,
+    max_width: int,
+    max_height: int,
+) -> tuple[ImageFont.FreeTypeFont, list[str], list[int], list[int], int, bool]:
+    words = [word for word in title.split() if word]
     if not words:
-        return []
+        words = ["Cybero Plus"]
 
-    lines: list[str] = []
-    current: list[str] = []
+    # New AI headlines are <= 11 words. The wider cap keeps older queued data safe.
+    words = words[:16]
 
-    for word in words:
-        candidate = " ".join(current + [word])
-        display = _rtl_display(candidate)
-        bbox = draw.textbbox((0, 0), display, font=font)
-        width = bbox[2] - bbox[0]
+    for size in range(118, 63, -4):
+        font, _ = _load_title_font(size)
+        line_gap = max(18, round(size * 0.24))
 
-        if current and width > max_width:
-            lines.append(" ".join(current))
-            current = [word]
-        else:
-            current.append(word)
+        for line_count in range(1, min(4, len(words)) + 1):
+            layout = _balanced_lines(draw, words, font, max_width, line_count)
+            if layout is None:
+                continue
+            lines, widths, heights, native = layout
+            total_height = sum(heights) + line_gap * (len(lines) - 1)
+            if total_height <= max_height:
+                return font, lines, widths, heights, line_gap, native
 
-        if len(lines) >= max_lines:
-            break
-
-    if current and len(lines) < max_lines:
-        lines.append(" ".join(current))
-
-    # If text was truncated by line count, mark it cleanly.
-    consumed = sum(len(line.split()) for line in lines)
-    if consumed < len(words) and lines:
-        lines[-1] = lines[-1].rstrip("…") + "…"
-
-    return lines[:max_lines]
+    font, _ = _load_title_font(62)
+    lines = [" ".join(words)]
+    width, height, native = _line_metrics(draw, lines[0], font)
+    return font, lines, [width], [height], 16, native
 
 
-def build_branded_fallback_asset(title: str = "") -> ImageAsset:
-    """Simple black Cybero Plus card with a yellow frame and large white title."""
-    width, height = 1200, 630
-    black = (8, 8, 8)
-    yellow = (250, 204, 0)
-    white = (248, 248, 248)
-    muted = (190, 190, 190)
+def _draw_title_line(
+    draw: ImageDraw.ImageDraw,
+    *,
+    right_x: int,
+    y: int,
+    line: str,
+    font: ImageFont.FreeTypeFont,
+    fill: tuple[int, int, int],
+    native_rtl: bool,
+) -> None:
+    clean = _strip_direction_controls(line).strip()
 
-    image = Image.new("RGB", (width, height), black)
-    draw = ImageDraw.Draw(image)
+    if native_rtl:
+        try:
+            draw.text(
+                (right_x, y),
+                clean,
+                font=font,
+                fill=fill,
+                direction="rtl",
+                language="ar",
+                anchor="rt",
+                stroke_width=1,
+                stroke_fill=(0, 0, 0),
+            )
+            return
+        except Exception:
+            pass
 
-    # Simple yellow frame, exactly as the fallback identity.
-    border = 14
-    draw.rectangle(
-        (border, border, width - border - 1, height - border - 1),
-        outline=yellow,
-        width=8,
+    legacy = _rtl_display(clean)
+    bbox = draw.textbbox((0, 0), legacy, font=font)
+    line_width = max(1, bbox[2] - bbox[0])
+    draw.text(
+        (right_x - line_width, y),
+        legacy,
+        font=font,
+        fill=fill,
+        stroke_width=1,
+        stroke_fill=(0, 0, 0),
     )
 
-    try:
-        title_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 66)
-        brand_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 28)
-        tiny_font = ImageFont.truetype("DejaVuSans.ttf", 22)
-    except OSError:
-        title_font = ImageFont.load_default()
-        brand_font = ImageFont.load_default()
-        tiny_font = ImageFont.load_default()
 
-    clean_title = re.sub(r"\s+", " ", (title or "").strip())
+def build_branded_fallback_asset(
+    title: str = "",
+    variant_key: int | str | None = None,
+) -> ImageAsset:
+    """Render a large RTL Cairo headline on one of four owner-supplied frames."""
+    clean_title = re.sub(
+        r"\s+",
+        " ",
+        _strip_direction_controls(title).strip(),
+    )
     if not clean_title:
         clean_title = "تحديث جديد من Cybero Plus"
 
-    lines = _wrap_rtl_title(
+    index = _variant_index(clean_title, variant_key)
+    image = _load_card_background(index)
+    draw = ImageDraw.Draw(image)
+
+    # Keep the headline fully inside the black reading area and away from the logo.
+    left_x = 145
+    right_x = 1460
+    top_y = 200
+    bottom_y = 760
+    max_width = right_x - left_x
+    max_height = bottom_y - top_y
+
+    font, lines, widths, heights, line_gap, native_rtl = _fit_title(
         draw,
         clean_title,
-        title_font,
-        max_width=940,
-        max_lines=4,
+        max_width,
+        max_height,
     )
 
-    line_gap = 20
-    heights: list[int] = []
-    displays: list[str] = []
-    for line in lines:
-        display = _rtl_display(line)
-        displays.append(display)
-        bbox = draw.textbbox((0, 0), display, font=title_font)
-        heights.append(max(1, bbox[3] - bbox[1]))
+    total_height = sum(heights) + line_gap * (len(lines) - 1)
+    y = top_y + max(0, (max_height - total_height) // 2)
+    text_color = CARD_TEXT_COLORS[index]
 
-    total_height = sum(heights)
-    if heights:
-        total_height += line_gap * (len(heights) - 1)
-
-    y = max(130, (height - total_height) // 2 - 10)
-    right_x = width - 110
-
-    for display, line_height in zip(displays, heights):
-        bbox = draw.textbbox((0, 0), display, font=title_font)
-        line_width = bbox[2] - bbox[0]
-        draw.text(
-            (right_x - line_width, y),
-            display,
-            fill=white,
-            font=title_font,
+    for line, height in zip(lines, heights):
+        _draw_title_line(
+            draw,
+            right_x=right_x,
+            y=y,
+            line=line,
+            font=font,
+            fill=text_color,
+            native_rtl=native_rtl,
         )
-        y += line_height + line_gap
-
-    # Minimal brand only; no decorative chart or busy background.
-    draw.text((70, 55), "C+", fill=yellow, font=brand_font)
-    draw.text((128, 58), "CYBERO PLUS", fill=white, font=brand_font)
-    draw.text((70, height - 68), "CyberoPlus.com", fill=muted, font=tiny_font)
+        y += height + line_gap
 
     output = io.BytesIO()
     image.save(output, format="JPEG", quality=96, optimize=True, subsampling=0)
     content = output.getvalue()
 
+    names = ("blue", "red", "white", "yellow")
     return ImageAsset(
-        url="generated://cyberoplus-simple-card",
+        url=f"generated://cyberoplus-card/{names[index]}",
         content=content,
         mime="image/jpeg",
-        width=width,
-        height=height,
-        filename="cyberoplus-news-card.jpg",
+        width=image.width,
+        height=image.height,
+        filename=f"cyberoplus-card-{names[index]}.jpg",
         origin="generated_fallback",
-        score=float(width * height),
+        score=float(image.width * image.height),
     )

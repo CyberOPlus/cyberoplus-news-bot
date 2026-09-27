@@ -140,7 +140,7 @@ def main():
 
         if not assets:
             card_title=str(item.get("card_title") or title or body).strip()
-            assets=[build_branded_fallback_asset(card_title)]
+            assets=[build_branded_fallback_asset(card_title, variant_key=tid)]
             image_diagnostics["generated_fallback_used"]=True
             image_diagnostics["selected"]=[{
                 "origin":"generated_fallback",

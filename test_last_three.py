@@ -128,7 +128,10 @@ def main() -> int:
 
             # User requirement: never publish text-only.
             if not assets:
-                assets = [build_branded_fallback_asset(message)]
+                assets = [build_branded_fallback_asset(
+                    str(rewritten.get("card_title") or message),
+                    variant_key=int(item["telegram_id"]),
+                )]
                 diagnostics["generated_fallback_used"] = True
                 diagnostics["selected"] = [{
                     "origin": "generated_fallback",

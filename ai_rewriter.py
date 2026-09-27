@@ -428,7 +428,11 @@ def enforce_source_policy(
 
     card_title = str(result.get("card_title") or "").strip()
     card_title = re.sub(r"\s+", " ", card_title)
-    result["card_title"] = isolate_latin_runs_rtl(card_title[:140])
+    # Keep generated image headlines short and cut only on word boundaries.
+    words = [word for word in card_title.split() if word]
+    if len(words) > 11:
+        card_title = " ".join(words[:11]).rstrip("،,:;؛.!?؟")
+    result["card_title"] = isolate_latin_runs_rtl(card_title)
     result["language"] = "ary"
     return result
 
