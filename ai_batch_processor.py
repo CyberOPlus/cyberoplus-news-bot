@@ -302,10 +302,21 @@ def main() -> int:
             return 0
 
         prepared_ids: list[int] = []
+        failed_ids: list[int] = []
         total_processed = int(state.get("processed_count", 0))
 
         for raw_item in pending:
-            ready_row = prepare_one(raw_item)
+            try:
+                ready_row = prepare_one(raw_item)
+            except Exception as exc:
+                failed_id = int(raw_item.get("telegram_id", 0) or 0)
+                failed_ids.append(failed_id)
+                print(
+                    f"WARNING: keeping Telegram item {failed_id} pending for retry: {exc}",
+                    file=sys.stderr,
+                )
+                continue
+
             append_ready(ready_row)
             for value in ready_row.get("telegram_ids") or [ready_row["telegram_id"]]:
                 ready_ids.add(int(value))
@@ -318,9 +329,10 @@ def main() -> int:
         print(
             json.dumps(
                 {
-                    "status": "prepared",
+                    "status": "prepared_with_failures" if failed_ids else "prepared",
                     "prepared_now": len(prepared_ids),
                     "ids": prepared_ids,
+                    "failed_pending_ids": failed_ids,
                     "ready_queue_size": len(ready_ids),
                     "last_processed_id": newest_processed,
                 },
@@ -328,6 +340,8 @@ def main() -> int:
                 indent=2,
             )
         )
+        # AI outages must not block publishing items that are already ready.
+        # Failed items remain absent from ready.jsonl and are retried next run.
         return 0
 
     except Exception as exc:
