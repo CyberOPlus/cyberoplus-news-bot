@@ -27,6 +27,7 @@ PROMPT_PATH = ROOT / "prompts" / "facebook_ar.txt"
 API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 DEFAULT_MODEL = "gemini-3-flash-preview"
 TIMEOUT_SECONDS = 60
+URL_RE = re.compile(r"https?://[^\\s<>()\\[\\]{}\\\"\']+")
 
 
 def read_latest_item() -> dict[str, Any]:
