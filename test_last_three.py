@@ -18,6 +18,29 @@ from image_resolver import build_branded_fallback_asset, resolve_post_images
 from telegram_collector import fetch_page, parse_messages
 
 
+OLD_BOT_POST_SUFFIXES = [
+    "122218965404353607",
+    "122219033858353607",
+    "122219035802353607",
+    "122219039612353607",
+    "122219037008353607",
+    "122219037128353607",
+    "122219037404353607",
+]
+
+
+def cleanup_known_old_posts(page_id: str, token: str) -> list[dict]:
+    results = []
+    for suffix in OLD_BOT_POST_SUFFIXES:
+        post_id = f"{page_id}_{suffix}"
+        try:
+            payload = api("DELETE", post_id, token)
+            results.append({"post_id": post_id, "deleted": bool(payload.get("success", True))})
+        except Exception as exc:
+            results.append({"post_id": post_id, "deleted": False, "warning": str(exc)})
+    return results
+
+
 def compose(title: str, body: str) -> str:
     title = (title or "").strip()
     body = (body or "").strip()
