@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import requests
 
+from image_resolver import normalize_for_facebook, resolve_post_images
+
 ROOT=Path(__file__).resolve().parent
 READY=ROOT/"data"/"ready.jsonl"
 EVENTS=ROOT/"data"/"facebook_events.jsonl"
@@ -71,6 +73,22 @@ def upload_photo(page_id,token,url):
     p=api("POST",f"{page_id}/photos",token,data={"url":url,"published":"false"})
     return str(p.get("id") or "")
 
+
+def upload_photo_bytes(page_id, token, asset):
+    normalized = normalize_for_facebook(asset)
+    url=f"{GRAPH_BASE}/{page_id}/photos"
+    response=requests.post(
+        url,
+        data={"access_token":token,"published":"false"},
+        files={"source":(normalized.filename,normalized.content,normalized.mime)},
+        timeout=60,
+    )
+    payload=response.json()
+    if not response.ok or "error" in payload:
+        error=payload.get("error") or {}
+        raise RuntimeError(f"{error.get('message') or response.status_code} (code={error.get('code')}, subcode={error.get('error_subcode')})")
+    return str(payload.get("id") or "")
+
 def publish(page_id,token,message,photo_ids=None):
     data={"message":message}
     for index, photo_id in enumerate((photo_ids or [])[:10]):
@@ -105,32 +123,35 @@ def main():
         if not message: raise RuntimeError("Ready item has no text")
 
         media=item.get("media") or {}
-        image_urls=[
+        telegram_image_urls=[
             str(url).strip()
             for url in (media.get("image_urls") or [])
             if str(url).strip()
         ]
-        if not image_urls and str(media.get("image_url") or "").strip():
-            image_urls=[str(media.get("image_url")).strip()]
+        if not telegram_image_urls and str(media.get("image_url") or "").strip():
+            telegram_image_urls=[str(media.get("image_url")).strip()]
+
+        source_url=str(item.get("source_url") or "").strip()
+        assets,image_diagnostics=resolve_post_images(telegram_image_urls,source_url,max_images=10)
 
         photo_ids=[]
         media_mode="text"
         media_errors=[]
-        for image_url in image_urls[:10]:
+        for asset in assets:
             try:
-                photo_id=upload_photo(page_id,token,image_url)
+                photo_id=upload_photo_bytes(page_id,token,asset)
                 if photo_id:
                     photo_ids.append(photo_id)
             except Exception as exc:
                 media_errors.append(str(exc))
-                print(f"WARNING image upload failed for one image: {exc}",file=sys.stderr)
+                print(f"WARNING high-quality image upload failed: {exc}",file=sys.stderr)
 
         if photo_ids:
-            media_mode="images" if len(photo_ids)>1 else "image"
+            media_mode="images" if len(photo_ids)>1 else ("source_image" if assets and assets[0].origin=="source" else "image")
 
         post_id=publish(page_id,token,message,photo_ids)
         first_comment=str(item.get("first_comment") or "").strip()
-        append_event({"event":"published","telegram_id":tid,"facebook_post_id":post_id,"published_at":now_iso(),"first_comment":first_comment,"source_url":item.get("source_url") or "","media_mode":media_mode,"media_errors":media_errors})
+        append_event({"event":"published","telegram_id":tid,"facebook_post_id":post_id,"published_at":now_iso(),"first_comment":first_comment,"source_url":item.get("source_url") or "","media_mode":media_mode,"media_errors":media_errors,"image_diagnostics":image_diagnostics})
 
         comment_status="none"
         if first_comment:
@@ -142,7 +163,7 @@ def main():
                 comment_status="pending_retry"
                 print(f"WARNING first comment pending retry: {exc}",file=sys.stderr)
 
-        print(json.dumps({"status":"published_to_facebook","telegram_id":tid,"facebook_post_id":post_id,"media_mode":media_mode,"first_comment_status":comment_status},ensure_ascii=False,indent=2))
+        print(json.dumps({"status":"published_to_facebook","telegram_id":tid,"facebook_post_id":post_id,"media_mode":media_mode,"first_comment_status":comment_status,"image_diagnostics":image_diagnostics},ensure_ascii=False,indent=2))
         return 0
     except Exception as exc:
         print(f"ERROR: {exc}",file=sys.stderr); return 1
