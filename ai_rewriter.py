@@ -37,8 +37,9 @@ GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
 OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 DEFAULT_GEMINI_MODELS = (
-    "gemini-3.8-flash",
     "gemini-3.7-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
 )
 DEFAULT_GROQ_MODELS = (
