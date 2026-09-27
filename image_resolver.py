@@ -23,7 +23,7 @@ import requests
 import arabic_reshaper
 from bidi.algorithm import get_display
 from bs4 import BeautifulSoup
-from PIL import Image, ImageOps, ImageDraw, ImageFont
+from PIL import Image, ImageOps, ImageDraw, ImageFont, ImageEnhance, ImageFilter
 
 
 TIMEOUT = 25
@@ -128,14 +128,17 @@ def fetch_image(url: str, origin: str, referer: str = "") -> ImageAsset | None:
                 chunks.append(chunk)
 
         content = b"".join(chunks)
-        if len(content) < 12_000:
+        minimum_bytes = 4_000 if origin == "telegram" else 12_000
+        if len(content) < minimum_bytes:
             return None
 
         with Image.open(io.BytesIO(content)) as image:
             width, height = image.size
             detected = Image.MIME.get(image.format or "", "") or content_type or "image/jpeg"
 
-        if width < MIN_WIDTH or height < MIN_HEIGHT:
+        minimum_width = 240 if origin == "telegram" else MIN_WIDTH
+        minimum_height = 160 if origin == "telegram" else MIN_HEIGHT
+        if width < minimum_width or height < minimum_height:
             return None
 
         ratio = width / max(height, 1)
@@ -331,13 +334,23 @@ def normalize_for_facebook(asset: ImageAsset) -> ImageAsset:
         else:
             image = image.convert("RGB")
 
-        # Never upscale. Only tame exceptionally large assets.
-        if image.width > 3000:
+        # Improve Facebook presentation without pretending to recover lost detail:
+        # small-but-valid images are resized cleanly; large ones are tamed.
+        if image.width < 1200 and image.width >= 240:
+            scale = min(1200 / image.width, 2.0)
+            target_width = round(image.width * scale)
+            target_height = round(image.height * scale)
+            image = image.resize(
+                (target_width, target_height),
+                Image.Resampling.LANCZOS,
+            )
+            image = ImageEnhance.Sharpness(image).enhance(1.08)
+        elif image.width > 3000:
             new_height = round(image.height * (3000 / image.width))
             image = image.resize((3000, new_height), Image.Resampling.LANCZOS)
 
         output = io.BytesIO()
-        image.save(output, format="JPEG", quality=95, optimize=True, subsampling=0)
+        image.save(output, format="JPEG", quality=96, optimize=True, subsampling=0)
         content = output.getvalue()
 
     return ImageAsset(
