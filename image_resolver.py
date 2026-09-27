@@ -21,7 +21,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageDraw, ImageFont
 
 
 TIMEOUT = 25
@@ -347,4 +347,67 @@ def normalize_for_facebook(asset: ImageAsset) -> ImageAsset:
         filename="cyberoplus-high-quality.jpg",
         origin=asset.origin,
         score=asset.score,
+    )
+
+
+def build_branded_fallback_asset(seed_text: str = "") -> ImageAsset:
+    """Create a clean Cybero Plus visual when no real/source image is available.
+
+    This is deliberately the last resort: Telegram media and the original
+    source image always win. It guarantees Facebook never receives a text-only
+    post from the bot.
+    """
+    width, height = 1200, 630
+    image = Image.new("RGB", (width, height), (10, 10, 10))
+    draw = ImageDraw.Draw(image)
+
+    gold = (245, 196, 0)
+    white = (245, 245, 245)
+    dark2 = (24, 24, 24)
+
+    # Editorial geometric background: clean, branded, not a fake news photo.
+    draw.rectangle((0, 0, width, height), fill=(10, 10, 10))
+    draw.polygon(
+        [(720, 0), (1200, 0), (1200, 360), (930, 285)],
+        fill=dark2,
+    )
+    draw.polygon(
+        [(0, 470), (430, 360), (680, 630), (0, 630)],
+        fill=(18, 18, 18),
+    )
+    draw.rectangle((0, 0, 14, height), fill=gold)
+    draw.rectangle((80, 105, 250, 117), fill=gold)
+
+    try:
+        brand_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 76)
+        small_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 30)
+    except OSError:
+        brand_font = ImageFont.load_default()
+        small_font = ImageFont.load_default()
+
+    draw.text((80, 145), "C+", fill=gold, font=brand_font)
+    draw.text((215, 167), "CYBERO PLUS", fill=white, font=small_font)
+    draw.text((82, 255), "CYBER / TECH UPDATE", fill=white, font=small_font)
+
+    # A deterministic accent pattern from the story text so fallback visuals
+    # are not pixel-identical across different posts.
+    checksum = sum(ord(ch) for ch in (seed_text or "")) % 7
+    for index in range(4):
+        x = 820 + index * 62
+        y = 400 - ((checksum + index * 2) % 5) * 28
+        draw.rectangle((x, y, x + 28, 545), fill=gold if index % 2 == 0 else white)
+
+    output = io.BytesIO()
+    image.save(output, format="JPEG", quality=95, optimize=True, subsampling=0)
+    content = output.getvalue()
+
+    return ImageAsset(
+        url="generated://cyberoplus-fallback",
+        content=content,
+        mime="image/jpeg",
+        width=width,
+        height=height,
+        filename="cyberoplus-fallback.jpg",
+        origin="generated_fallback",
+        score=float(width * height),
     )
