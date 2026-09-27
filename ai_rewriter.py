@@ -89,6 +89,38 @@ def parse_json_response(text: str) -> dict[str, Any]:
     return data
 
 
+LATIN_RUN_RE = re.compile(r"(?<![\u2068\w])([A-Za-z][A-Za-z0-9._+/#:&()'’\-]*(?:\s+[A-Za-z0-9][A-Za-z0-9._+/#:&()'’\-]*){0,3})(?![\w\u2069])")
+
+
+def isolate_latin_runs_rtl(text: str) -> str:
+    """Keep Latin technical terms visually stable inside Arabic RTL text."""
+    if not text:
+        return ""
+
+    # Do not touch URLs; they stay in comments, but protect them defensively.
+    placeholders: dict[str, str] = {}
+
+    def stash_url(match: re.Match[str]) -> str:
+        key = f"__URL_{len(placeholders)}__"
+        placeholders[key] = match.group(0)
+        return key
+
+    protected = URL_RE.sub(stash_url, text)
+
+    def wrap(match: re.Match[str]) -> str:
+        value = match.group(1)
+        if not value.strip():
+            return value
+        return "\u2068" + value + "\u2069"
+
+    protected = LATIN_RUN_RE.sub(wrap, protected)
+
+    for key, value in placeholders.items():
+        protected = protected.replace(key, value)
+
+    return protected
+
+
 def enforce_source_policy(result: dict[str, Any], allowed_links: list[str]) -> dict[str, Any]:
     allowed = [str(url) for url in allowed_links if url]
     source_url = str(result.get("source_url") or "").strip()
@@ -113,6 +145,8 @@ def enforce_source_policy(result: dict[str, Any], allowed_links: list[str]) -> d
         for fragment in forbidden_fragments:
             value = re.sub(re.escape(fragment), "", value, flags=re.I)
         value = re.sub(r"\s{2,}", " ", value).strip()
+        if field in ("title", "facebook_post"):
+            value = isolate_latin_runs_rtl(value)
         result[field] = value
 
     return result
