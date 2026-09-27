@@ -71,11 +71,15 @@ def split_source_note(text: str) -> tuple[str, str]:
 def normalize_item(item: dict[str, Any]) -> dict[str, Any]:
     original_text = item.get("clean_text") or item.get("text") or item.get("raw_text") or ""
     text, source_note = split_source_note(str(original_text))
+    title_signal = bool(
+        re.search(r"(?im)^\s*(?:‼️\s*)?(?:BREAKING|ALERT|URGENT|EXCLUSIVE)\s*:", text)
+    )
     return {
         "telegram_id": item.get("telegram_id") or item.get("id"),
         "published_at": item.get("published_at"),
         "text": text,
         "source_note": source_note,
+        "has_explicit_title": title_signal,
         "source_links": item.get("source_links") or [],
         "has_image": bool(item.get("has_image")),
         "has_video": bool(item.get("has_video")),
@@ -151,6 +155,7 @@ def enforce_source_policy(
     result: dict[str, Any],
     allowed_links: list[str],
     source_note: str = "",
+    has_explicit_title: bool = False,
 ) -> dict[str, Any]:
     allowed = [str(url) for url in allowed_links if url]
     source_url = str(result.get("source_url") or "").strip()
@@ -168,6 +173,9 @@ def enforce_source_policy(
         result["first_comment"] = f"المصدر: {source_url}"
     else:
         result["first_comment"] = ""
+
+    if not has_explicit_title:
+        result["title"] = ""
 
     forbidden_fragments = (
         "internationalcyberdigest.com",
@@ -198,6 +206,7 @@ def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
         "text": item["text"],
         "source_links": item["source_links"],
         "source_note": item.get("source_note", ""),
+        "has_explicit_title": bool(item.get("has_explicit_title")),
         "media": {
             "has_image": item["has_image"],
             "has_video": item["has_video"],
@@ -248,6 +257,7 @@ def _call_gemini_provider(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         generated,
         item["source_links"],
         item.get("source_note", ""),
+        bool(item.get("has_explicit_title")),
     )
 
 
@@ -300,6 +310,7 @@ def _call_openai_compatible(
         generated,
         item["source_links"],
         item.get("source_note", ""),
+        bool(item.get("has_explicit_title")),
     )
 
 
