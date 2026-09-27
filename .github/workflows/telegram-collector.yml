@@ -3,21 +3,6 @@ name: Telegram to Facebook publisher
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "2-57/5 * * * *"
-  push:
-    branches:
-      - main
-    paths:
-      - "telegram_collector.py"
-      - "ai_batch_processor.py"
-      - "ai_rewriter.py"
-      - "facebook_publisher.py"
-      - "image_resolver.py"
-      - "video_processor.py"
-      - "prompts/facebook_ar.txt"
-      - "requirements.txt"
-      - ".github/workflows/telegram-collector.yml"
 
 permissions:
   contents: write

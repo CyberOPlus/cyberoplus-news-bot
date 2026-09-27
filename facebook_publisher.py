@@ -301,7 +301,12 @@ def main() -> int:
         fresh_image_urls = telegram_image_candidates(telegram_post_url)
         telegram_image_urls = _unique(fresh_image_urls + stored_image_urls)
 
-        assets, image_diagnostics = resolve_post_images(telegram_image_urls, "", max_images=10)
+        source_image_url = str(item.get("source_url") or "").strip()
+        assets, image_diagnostics = resolve_post_images(
+            telegram_image_urls,
+            source_image_url,
+            max_images=10,
+        )
         diagnostics["images"] = image_diagnostics
 
         if not assets:

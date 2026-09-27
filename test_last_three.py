@@ -4,211 +4,179 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
+from ai_batch_processor import enrich_reply_context
 from ai_rewriter import call_gemini, normalize_item
 from facebook_publisher import (
+    EVENTS,
     api,
+    append_event,
     post_comment,
-    publish,
+    publish_images,
+    publish_video_file,
     upload_photo_bytes,
     verify,
 )
-from image_resolver import build_branded_fallback_asset, resolve_post_images
+from image_resolver import (
+    build_branded_fallback_asset,
+    resolve_post_images,
+    telegram_image_candidates,
+)
 from telegram_collector import fetch_page, parse_messages
+from video_processor import prepare_branded_video
 
+TARGET_IDS=(1674,1675,1676)
+EXPECTED={
+    1674:{"text_all":("google maps","gaza strip")},
+    1675:{"text_all":("openai","anthropic")},
+    1676:{"source_any":("sh3llc0d3.com","netscaler")},
+}
+OUT=Path("live-test-output")
 
-OLD_BOT_POST_SUFFIXES = [
-    "122218965404353607",
-    "122219033858353607",
-    "122219035802353607",
-    "122219039612353607",
-    "122219037008353607",
-    "122219037128353607",
-    "122219037404353607",
-    "122219040992353607",
-    "122219041190353607",
-    "122219041364353607",
-    "122219042180353607",
-    "122219042354353607",
-    "122219042564353607",
-    "122219042942353607",
-    "122219043062353607",
-    "122219043248353607",
-]
+def events():
+    if not EVENTS.exists(): return []
+    return [json.loads(x) for x in EVENTS.read_text(encoding="utf-8").splitlines() if x.strip()]
 
+def published_ids():
+    return {int(x.get("telegram_id",0) or 0) for x in events() if x.get("event")=="published"}
 
-def cleanup_known_old_posts(page_id: str, token: str) -> list[dict]:
-    results = []
-    for suffix in OLD_BOT_POST_SUFFIXES:
-        post_id = f"{page_id}_{suffix}"
-        try:
-            payload = api("DELETE", post_id, token)
-            results.append({"post_id": post_id, "deleted": bool(payload.get("success", True))})
-        except Exception as exc:
-            results.append({"post_id": post_id, "deleted": False, "warning": str(exc)})
-    return results
+def validate_target(raw):
+    tid=int(raw["telegram_id"])
+    rule=EXPECTED[tid]
+    text=str(raw.get("raw_text") or raw.get("clean_text") or "").lower()
+    links=" ".join(str(x) for x in (raw.get("source_links") or [])).lower()
+    for marker in rule.get("text_all",()):
+        if marker not in text:
+            raise RuntimeError(f"Telegram {tid} safety marker missing: {marker}")
+    any_markers=rule.get("source_any",())
+    if any_markers and not any(m in links or m in text for m in any_markers):
+        raise RuntimeError(f"Telegram {tid} source safety markers missing")
 
+def unique(values):
+    out=[]
+    for value in values:
+        value=str(value or "").strip()
+        if value and value not in out: out.append(value)
+    return out
 
-def compose(title: str, body: str) -> str:
-    title = (title or "").strip()
-    body = (body or "").strip()
-    if title and body:
-        return f"{title}\n\n{body}"
-    return title or body
-
-
-def telegram_images(raw_item: dict) -> list[str]:
-    urls = [
-        str(url).strip()
-        for url in (raw_item.get("image_urls") or [])
-        if str(url).strip()
-    ]
-    if not urls and str(raw_item.get("image_url") or "").strip():
-        urls.append(str(raw_item["image_url"]).strip())
-    return urls
-
-
-def live_verify(post_id: str, token: str) -> dict:
-    # Verify the object that Facebook actually stored, not only our request.
+def live_verify(object_id,token,mode):
+    fields="id,created_time,permalink_url"
+    fields += ",description" if mode=="video" else ",message,full_picture,attachments{media_type,url,target,media,subattachments}"
     try:
-        return api(
-            "GET",
-            post_id,
-            token,
-            params={
-                "fields": (
-                    "id,message,created_time,permalink_url,full_picture,"
-                    "attachments{media_type,url,target,media,subattachments}"
-                )
-            },
-        )
+        return api("GET",object_id,token,params={"fields":fields})
     except Exception as exc:
-        return {"verification_error": str(exc), "id": post_id}
+        return {"id":object_id,"verification_error":str(exc)}
 
+def main():
+    OUT.mkdir(parents=True,exist_ok=True)
+    page_id=os.environ["FACEBOOK_PAGE_ID"].strip()
+    token=os.environ["FACEBOOK_PAGE_ACCESS_TOKEN"].strip()
+    page=verify(page_id,token)
 
-def main() -> int:
-    try:
-        page_id = os.environ["FACEBOOK_PAGE_ID"].strip()
-        token = os.environ["FACEBOOK_PAGE_ACCESS_TOKEN"].strip()
-        page = verify(page_id, token)
+    messages=parse_messages(fetch_page())
+    by_id={int(x["telegram_id"]):x for x in messages}
+    missing=[x for x in TARGET_IDS if x not in by_id]
+    if missing: raise RuntimeError(f"Target IDs not found on current Telegram page: {missing}")
 
-        messages = sorted(
-            parse_messages(fetch_page()),
-            key=lambda item: int(item.get("telegram_id", 0)),
-            reverse=True,
-        )[:3]
+    targets=[by_id[x] for x in TARGET_IDS]
+    for raw in targets: validate_target(raw)
+    targets=enrich_reply_context(targets,messages)
 
-        if len(messages) < 3:
-            raise RuntimeError(f"Expected 3 Telegram posts, found {len(messages)}")
+    done=published_ids()
+    results=[]
+    for raw in targets:
+        tid=int(raw["telegram_id"])
+        if tid in done:
+            results.append({"telegram_id":tid,"status":"already_published_skipped"})
+            continue
 
-        results = []
+        item=normalize_item(raw)
+        model,rewritten=call_gemini(item)
+        message=str(rewritten.get("facebook_post") or "").strip()
+        if not message: raise RuntimeError(f"Telegram {tid} produced no Facebook text")
+        first_comment=str(rewritten.get("first_comment") or "").strip()
+        source_url=str(rewritten.get("source_url") or "").strip()
 
-        # Publish oldest -> newest so Facebook ends in the same chronological order
-        # as the Telegram channel.
-        for position, raw_item in enumerate(reversed(messages), start=1):
-            item = normalize_item(raw_item)
-            model, rewritten = call_gemini(item)
+        warnings=[]
+        post_id=""
+        mode=""
+        details={}
 
-            message = compose(
-                rewritten.get("title", ""),
-                rewritten.get("facebook_post", ""),
-            )
-            if not message:
-                raise RuntimeError(
-                    f"Telegram {item['telegram_id']} produced no publishable text."
-                )
+        if raw.get("has_video"):
+            video_urls=unique(list(raw.get("video_urls") or [])+([raw.get("video_url")] if raw.get("video_url") else []))
+            try:
+                with tempfile.TemporaryDirectory(prefix=f"cyberoplus-live-{tid}-") as td:
+                    video=prepare_branded_video(video_urls,str(raw.get("telegram_post_url") or ""),Path(td))
+                    details={"width":video.width,"height":video.height,"duration":video.duration,"bytes":video.size,"branded":video.branded}
+                    post_id=publish_video_file(page_id,token,message,video)
+                    mode="video"
+            except Exception as exc:
+                warnings.append(f"video fallback: {exc}")
 
-            source_url = str(rewritten.get("source_url") or "").strip()
-            assets, diagnostics = resolve_post_images(
-                telegram_images(raw_item),
-                source_url,
-                max_images=10,
-            )
-
-            # User requirement: never publish text-only.
+        if not post_id:
+            stored=unique(list(raw.get("image_urls") or [])+([raw.get("image_url")] if raw.get("image_url") else [])+list(raw.get("video_thumbnail_urls") or []))
+            fresh=telegram_image_candidates(str(raw.get("telegram_post_url") or ""))
+            assets,details=resolve_post_images(unique(fresh+stored),source_url,max_images=10)
             if not assets:
-                assets = [build_branded_fallback_asset(
-                    str(rewritten.get("card_title") or message),
-                    variant_key=int(item["telegram_id"]),
-                )]
-                diagnostics["generated_fallback_used"] = True
-                diagnostics["selected"] = [{
-                    "origin": "generated_fallback",
-                    "width": assets[0].width,
-                    "height": assets[0].height,
-                    "url": assets[0].url,
-                }]
-            else:
-                diagnostics["generated_fallback_used"] = False
+                assets=[build_branded_fallback_asset(str(rewritten.get("card_title") or message),variant_key=tid)]
+                details["generated_fallback_used"]=True
 
-            photo_ids = []
-            warnings = []
+            photo_ids=[]
             for asset in assets:
                 try:
-                    photo_id = upload_photo_bytes(page_id, token, asset)
-                    if photo_id:
-                        photo_ids.append(photo_id)
+                    pid=upload_photo_bytes(page_id,token,asset)
+                    if pid: photo_ids.append(pid)
                 except Exception as exc:
                     warnings.append(f"image: {exc}")
+            if not photo_ids: raise RuntimeError(f"Telegram {tid}: no media uploaded")
 
-            if not photo_ids:
-                raise RuntimeError(
-                    f"Telegram {item['telegram_id']} has no successfully uploaded image; "
-                    "refusing to publish a text-only test post."
-                )
+            post_id=publish_images(page_id,token,message,photo_ids)
+            mode="generated_card" if getattr(assets[0],"origin","")=="generated_fallback" else ("images" if len(photo_ids)>1 else "image")
+            details["uploaded_count"]=len(photo_ids)
 
-            post_id = publish(page_id, token, message, photo_ids)
+        append_event({
+            "event":"published","telegram_id":tid,"facebook_post_id":post_id,
+            "published_at":datetime.now(timezone.utc).isoformat(),
+            "first_comment":first_comment,"source_url":source_url,
+            "media_mode":mode,"live_test":True
+        })
 
-            first_comment = str(rewritten.get("first_comment") or "").strip()
-            comment_id = ""
-            if first_comment:
-                try:
-                    comment_id = post_comment(post_id, token, first_comment)
-                except Exception as exc:
-                    warnings.append(f"comment: {exc}")
+        comment_id=""
+        if first_comment:
+            try:
+                comment_id=post_comment(post_id,token,first_comment)
+                append_event({
+                    "event":"comment_posted","telegram_id":tid,
+                    "facebook_post_id":post_id,"comment_id":comment_id,
+                    "commented_at":datetime.now(timezone.utc).isoformat(),
+                    "live_test":True
+                })
+            except Exception as exc:
+                warnings.append(f"comment: {exc}")
 
-            # Give Graph API a moment, then read back the live Facebook object.
-            time.sleep(2)
-            live = live_verify(post_id, token)
+        time.sleep(2)
+        results.append({
+            "telegram_id":tid,"status":"published","facebook_object_id":post_id,
+            "media_mode":mode,"ai_model":model,
+            "first_comment_posted":bool(comment_id) if first_comment else None,
+            "media_details":details,"live_verification":live_verify(post_id,token,mode),
+            "warnings":warnings
+        })
+        done.add(tid)
+        if tid!=TARGET_IDS[-1]: time.sleep(3)
 
-            results.append({
-                "test_position": position,
-                "telegram_id": int(item["telegram_id"]),
-                "facebook_post_id": post_id,
-                "page_name": page.get("name"),
-                "ai_model": model,
-                "message": message,
-                "source_url": source_url,
-                "first_comment": first_comment,
-                "comment_posted": bool(comment_id) if first_comment else None,
-                "images_published": len(photo_ids),
-                "image_diagnostics": diagnostics,
-                "live_facebook_verification": {
-                    "id": live.get("id"),
-                    "created_time": live.get("created_time"),
-                    "permalink_url": live.get("permalink_url"),
-                    "full_picture": live.get("full_picture"),
-                    "has_message": bool(live.get("message")),
-                    "has_attachments": bool(live.get("attachments")),
-                    "verification_error": live.get("verification_error"),
-                },
-                "warnings": warnings,
-            })
+    payload={"status":"target_three_live_test_complete","page_id":page.get("id"),"page_name":page.get("name"),"target_ids":list(TARGET_IDS),"results":results}
+    (OUT/"results.json").write_text(json.dumps(payload,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+    print(json.dumps(payload,ensure_ascii=False,indent=2))
+    return 0
 
-            if position < 3:
-                time.sleep(3)
-
-        print(json.dumps({
-            "status": "three_darija_image_posts_published_and_verified",
-            "results": results,
-        }, ensure_ascii=False, indent=2))
-        return 0
-
+if __name__=="__main__":
+    try: raise SystemExit(main())
     except Exception as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+        print(f"ERROR: {exc}",file=sys.stderr)
+        raise

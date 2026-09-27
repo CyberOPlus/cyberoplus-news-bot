@@ -131,35 +131,35 @@ ATTENTION_LABELS = {"breaking", "warning", "important", "none"}
 CERTAINTY_LEVELS = {"confirmed", "attributed", "reported", "uncertain"}
 
 EXPLICIT_BREAKING_RE = re.compile(
-    r"(?i)(?:^|\\n)\\s*(?:[🚨‼️❗]+\\s*)?(?:BREAKING|URGENT|عاجل)\\b"
+    r"(?i)(?:^|\n)\s*(?:[🚨‼️❗]+\s*)?(?:BREAKING|URGENT|عاجل)\b"
 )
 EXPLICIT_WARNING_RE = re.compile(
-    r"(?i)(?:^|\\n)\\s*(?:[⚠️‼️❗]+\\s*)?(?:ALERT|WARNING|WARN|تنبيه|تحذير)\\b"
+    r"(?i)(?:^|\n)\s*(?:[⚠️‼️❗]+\s*)?(?:ALERT|WARNING|WARN|تنبيه|تحذير)\b"
 )
 EXPLICIT_IMPORTANT_RE = re.compile(
-    r"(?i)(?:^|\\n)\\s*(?:[❗‼️]+\\s*)?(?:IMPORTANT|مهم)\\b"
+    r"(?i)(?:^|\n)\s*(?:[❗‼️]+\s*)?(?:IMPORTANT|مهم)\b"
 )
 RISK_SIGNAL_RE = re.compile(
-    r"(?i)\\b(?:zero[- ]day|0day|exploit(?:ed|ation|ing)?|in the wild|"
+    r"(?i)\b(?:zero[- ]day|0day|exploit(?:ed|ation|ing)?|in the wild|"
     r"malware|ransomware|phishing|scam|credential(?:s)?|breach|"
     r"compromis(?:e|ed)|attack(?:s|ed|ing)?|vulnerabilit(?:y|ies)|"
-    r"data leak|stolen|steal(?:ing)?|CVE-\\d{4}-\\d{4,7})\\b|"
+    r"data leak|stolen|steal(?:ing)?|CVE-\d{4}-\d{4,7})\b|"
     r"(?:ثغرة|اختراق|هجوم|برمجية خبيثة|تصيد|احتيال|تسريب بيانات|سرقة بيانات)"
 )
 ATTRIBUTION_SIGNAL_RE = re.compile(
-    r"(?i)\\b(?:reportedly|according to (?:sources|reports)|sources say|"
-    r"claims?|allegedly|بحسب مصادر|حسب مصادر|وفقاً لتقارير|وفقا لتقارير)\\b"
+    r"(?i)\b(?:reportedly|according to (?:sources|reports)|sources say|"
+    r"claims?|allegedly|بحسب مصادر|حسب مصادر|وفقاً لتقارير|وفقا لتقارير)\b"
 )
 UNCERTAIN_SIGNAL_RE = re.compile(
-    r"(?i)\\b(?:unconfirmed|suspected|possibly|may have|might have|"
-    r"غير مؤكد|مشتبه|ربما)\\b"
+    r"(?i)\b(?:unconfirmed|suspected|possibly|may have|might have|"
+    r"غير مؤكد|مشتبه|ربما)\b"
 )
-CVE_RE = re.compile(r"(?i)\\bCVE-\\d{4}-\\d{4,7}\\b")
-NUMBER_RE = re.compile(r"(?<![\\w])\\d[\\d.,:/-]*%?(?![\\w])")
+CVE_RE = re.compile(r"(?i)\bCVE-\d{4}-\d{4,7}\b")
+NUMBER_RE = re.compile(r"(?<![\w])\d[\d.,:/-]*%?(?![\w])")
 ATTENTION_PREFIX_RE = re.compile(
-    r"(?i)^\\s*(?:[🚨⚠️❗‼️]+\\s*)?"
+    r"(?i)^\s*(?:[🚨⚠️❗‼️]+\s*)?"
     r"(?:عاجل|تحذير(?: أمني)?|تنبيه(?: أمني)?|مهم|BREAKING|URGENT|ALERT|WARNING)"
-    r"\\s*[:：\\-–—]?\\s*"
+    r"\s*[:：\-–—]?\s*"
 )
 
 
@@ -319,7 +319,7 @@ def _extract_gemini_text(response: dict[str, Any]) -> str:
     if not chunks:
         raise RuntimeError("Gemini returned a candidate without text.")
 
-    return "\\n".join(chunks).strip()
+    return "\n".join(chunks).strip()
 
 
 def parse_json_response(text: str) -> dict[str, Any]:
@@ -420,7 +420,7 @@ def _canonical_source_link(allowed_links: list[str]) -> str:
 
 def _clean_source_text(text: str) -> str:
     value = URL_RE.sub("", str(text or ""))
-    value = re.sub(r"\\s+", " ", value).strip()
+    value = re.sub(r"\s+", " ", value).strip()
     return value
 
 
@@ -465,6 +465,31 @@ def _validate_fact_fidelity(source_text: str, facebook_post: str) -> None:
         raise RuntimeError("AI output is too short and may have dropped source facts.")
     if len(source_clean) >= 100 and len(output_clean) > max(900, int(len(source_clean) * 2.5)):
         raise RuntimeError("AI output is unusually long and may contain added material.")
+
+
+def _validate_protected_entities(entities: list[str], facebook_post: str) -> None:
+    """Reject model output that damages a protected Latin/digit entity."""
+    clean_post = (
+        str(facebook_post or "")
+        .replace("\u2066", "")
+        .replace("\u2067", "")
+        .replace("\u2068", "")
+        .replace("\u2069", "")
+        .replace("\u200e", "")
+        .replace("\u200f", "")
+    )
+    missing: list[str] = []
+    for raw in entities:
+        entity = str(raw or "").strip()
+        if len(entity) < 3 or not re.search(r"[A-Za-z0-9]", entity):
+            continue
+        if entity not in clean_post:
+            missing.append(entity)
+    if missing:
+        raise RuntimeError(
+            "AI changed or omitted protected entities: "
+            + ", ".join(missing[:8])
+        )
 
 
 def _validated_certainty(source_text: str, requested: str) -> str:
@@ -522,7 +547,7 @@ def _split_long_single_paragraph(paragraph: str) -> list[str]:
 
     sentences = [
         part.strip()
-        for part in re.split(r"(?<=[.!?؟])\\s+", paragraph)
+        for part in re.split(r"(?<=[.!?؟])\s+", paragraph)
         if part.strip()
     ]
     if len(sentences) < 3:
@@ -553,10 +578,10 @@ def _split_long_single_paragraph(paragraph: str) -> list[str]:
 
 def _format_facebook_paragraphs(text: str) -> str:
     value = _strip_attention_prefix(text)
-    value = re.sub(r"[ \\t]+", " ", value)
+    value = re.sub(r"[ \t]+", " ", value)
     raw = [
-        re.sub(r"\\s*\\n\\s*", " ", part).strip()
-        for part in re.split(r"\\n\\s*\\n+", value)
+        re.sub(r"\s*\n\s*", " ", part).strip()
+        for part in re.split(r"\n\s*\n+", value)
         if part.strip()
     ]
 
@@ -569,7 +594,7 @@ def _format_facebook_paragraphs(text: str) -> str:
     if len(raw) > 4:
         raw = raw[:3] + [" ".join(raw[3:])]
 
-    return "\\n\\n".join(part for part in raw if part)
+    return "\n\n".join(part for part in raw if part)
 
 
 def enforce_source_policy(
@@ -611,10 +636,10 @@ def enforce_source_policy(
 
     # Keep editorial analysis auditable, but never trust it as the source of truth.
     result["main_fact"] = re.sub(
-        r"\\s+", " ", str(result.get("main_fact") or "").strip()
+        r"\s+", " ", str(result.get("main_fact") or "").strip()
     )[:600]
     result["supporting_facts"] = [
-        re.sub(r"\\s+", " ", str(value).strip())[:600]
+        re.sub(r"\s+", " ", str(value).strip())[:600]
         for value in (result.get("supporting_facts") or [])
         if str(value or "").strip()
     ][:12]
@@ -637,7 +662,7 @@ def enforce_source_policy(
     }
     if note and source_url:
         label = labels.get(role, "المصدر")
-        result["first_comment"] = f"{label}: {note}\\n{source_url}"
+        result["first_comment"] = f"{label}: {note}\n{source_url}"
     elif note:
         label = labels.get(role, "المصدر")
         result["first_comment"] = f"{label}: {note}"
@@ -664,14 +689,15 @@ def enforce_source_policy(
         if url:
             body = body.replace(str(url), "")
 
-    body = re.sub(r"(?i)\\bBREAKING\\s*:", "", body)
-    body = re.sub(r"(?i)\\bALERT\\s*:", "", body)
-    body = re.sub(r"(?i)\\bURGENT\\s*:", "", body)
+    body = re.sub(r"(?i)\bBREAKING\s*:", "", body)
+    body = re.sub(r"(?i)\bALERT\s*:", "", body)
+    body = re.sub(r"(?i)\bURGENT\s*:", "", body)
     body = _format_facebook_paragraphs(body)
     if not body:
         raise RuntimeError("AI returned an empty Facebook post.")
 
     _validate_fact_fidelity(source_text, body)
+    _validate_protected_entities(result.get("protected_entities") or [], body)
 
     attention_prefix = {
         "breaking": "🚨 عاجل",
@@ -691,11 +717,11 @@ def enforce_source_policy(
         }.get(result["link_role"], "المصدر فالتعليق الأول.")
 
     sections = [section for section in (attention_prefix, body, cue) if section]
-    result["facebook_post"] = isolate_latin_runs_rtl("\\n\\n".join(sections))
+    result["facebook_post"] = isolate_latin_runs_rtl("\n\n".join(sections))
 
     card_title = str(result.get("card_title") or "").strip()
     card_title = ATTENTION_PREFIX_RE.sub("", card_title, count=1).strip()
-    card_title = re.sub(r"\\s+", " ", card_title)
+    card_title = re.sub(r"\s+", " ", card_title)
     words = [word for word in card_title.split() if word]
     if len(words) > 11:
         card_title = " ".join(words[:11]).rstrip("،,:;؛.!?؟")

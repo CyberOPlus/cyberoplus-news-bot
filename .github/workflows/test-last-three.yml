@@ -1,32 +1,44 @@
-# final-pass
-# One-time live validation after cleanup
-name: Test latest three Facebook posts
+name: LIVE TEST — Telegram 1674-1676 to Facebook
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "live-test-trigger.txt"
 
 permissions:
-  contents: read
+  contents: write
+
+concurrency:
+  group: telegram-facebook-pipeline
+  cancel-in-progress: false
 
 jobs:
-  publish-three-tests:
+  publish-exact-three:
     runs-on: ubuntu-24.04
-    timeout-minutes: 16
-
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-
+        with:
+          fetch-depth: 0
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: "pip"
-
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
-
-      - name: Publish and verify latest three Darija posts
+      - name: Ensure FFmpeg is available
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+      - name: Publish exactly Telegram 1674 1675 1676
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODELS: gemini-3.7-flash,gemini-3.5-flash
@@ -38,3 +50,25 @@ jobs:
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
           META_GRAPH_VERSION: v26.0
         run: python test_last_three.py
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-facebook-test-1674-1676
+          path: live-test-output/
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Persist publication events
+        if: always()
+        shell: bash
+        run: |
+          git config user.name "cyberoplus-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/facebook_events.jsonl
+          if git diff --cached --quiet; then
+            echo "No event changes."
+            exit 0
+          fi
+          git commit -m "Persist live Facebook test events [skip ci]"
+          git pull --rebase origin main
+          git push
