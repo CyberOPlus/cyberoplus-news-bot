@@ -30,13 +30,8 @@ from image_resolver import (
 from telegram_collector import fetch_page, parse_messages
 from video_processor import prepare_branded_video
 
-TARGET_IDS=(1674,1675,1676)
-EXPECTED={
-    1674:{"text_all":("google maps","gaza strip")},
-    1675:{"text_all":("openai","anthropic")},
-    1676:{"source_any":("sh3llc0d3.com","netscaler")},
-}
 OUT=Path("live-test-output")
+
 
 def events():
     if not EVENTS.exists(): return []
@@ -45,17 +40,53 @@ def events():
 def published_ids():
     return {int(x.get("telegram_id",0) or 0) for x in events() if x.get("event")=="published"}
 
-def validate_target(raw):
-    tid=int(raw["telegram_id"])
-    rule=EXPECTED[tid]
+def _haystack(raw):
     text=str(raw.get("raw_text") or raw.get("clean_text") or "").lower()
     links=" ".join(str(x) for x in (raw.get("source_links") or [])).lower()
-    for marker in rule.get("text_all",()):
-        if marker not in text:
-            raise RuntimeError(f"Telegram {tid} safety marker missing: {marker}")
-    any_markers=rule.get("source_any",())
-    if any_markers and not any(m in links or m in text for m in any_markers):
-        raise RuntimeError(f"Telegram {tid} source safety markers missing")
+    return text,links
+
+
+def select_target_posts(messages):
+    """Select exactly the three user-approved Telegram posts by content, not guessed IDs."""
+    matches={}
+
+    for raw in messages:
+        text,links=_haystack(raw)
+
+        if "google maps" in text and "gaza strip" in text:
+            matches.setdefault("google_maps_gaza",[]).append(raw)
+
+        if "openai" in text and "anthropic" in text and ("ai agents" in text or "agents" in text):
+            matches.setdefault("openai_anthropic_agents",[]).append(raw)
+
+        if "sh3llc0d3.com" in links or "netscaler-zero-day" in links:
+            matches.setdefault("citrix_netscaler_update",[]).append(raw)
+
+    required=("google_maps_gaza","openai_anthropic_agents","citrix_netscaler_update")
+    selected=[]
+    diagnostics={}
+    for key in required:
+        rows=matches.get(key,[])
+        diagnostics[key]=[
+            {
+                "telegram_id":int(row.get("telegram_id",0) or 0),
+                "media_type":row.get("media_type"),
+                "has_video":bool(row.get("has_video")),
+                "has_image":bool(row.get("has_image")),
+            }
+            for row in rows
+        ]
+        if len(rows)!=1:
+            raise RuntimeError(
+                f"Expected exactly one match for {key}, found {len(rows)}: {diagnostics[key]}"
+            )
+        selected.append(rows[0])
+
+    ids=[int(row["telegram_id"]) for row in selected]
+    if len(set(ids))!=3:
+        raise RuntimeError(f"Target selectors overlapped unexpectedly: {ids}")
+
+    return sorted(selected,key=lambda row:int(row["telegram_id"])),diagnostics
 
 def unique(values):
     out=[]
@@ -79,12 +110,9 @@ def main():
     page=verify(page_id,token)
 
     messages=parse_messages(fetch_page())
-    by_id={int(x["telegram_id"]):x for x in messages}
-    missing=[x for x in TARGET_IDS if x not in by_id]
-    if missing: raise RuntimeError(f"Target IDs not found on current Telegram page: {missing}")
-
-    targets=[by_id[x] for x in TARGET_IDS]
-    for raw in targets: validate_target(raw)
+    targets,selection_diagnostics=select_target_posts(messages)
+    target_ids=[int(row["telegram_id"]) for row in targets]
+    print(json.dumps({"selected_targets":selection_diagnostics,"target_ids":target_ids},ensure_ascii=False,indent=2))
     targets=enrich_reply_context(targets,messages)
 
     done=published_ids()
@@ -168,9 +196,9 @@ def main():
             "warnings":warnings
         })
         done.add(tid)
-        if tid!=TARGET_IDS[-1]: time.sleep(3)
+        if tid!=target_ids[-1]: time.sleep(3)
 
-    payload={"status":"target_three_live_test_complete","page_id":page.get("id"),"page_name":page.get("name"),"target_ids":list(TARGET_IDS),"results":results}
+    payload={"status":"target_three_live_test_complete","page_id":page.get("id"),"page_name":page.get("name"),"target_ids":target_ids,"results":results}
     (OUT/"results.json").write_text(json.dumps(payload,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(payload,ensure_ascii=False,indent=2))
     return 0
