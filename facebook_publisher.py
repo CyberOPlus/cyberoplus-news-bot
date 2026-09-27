@@ -5,7 +5,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import requests
 
-from image_resolver import normalize_for_facebook, resolve_post_images
+from image_resolver import (
+    build_branded_fallback_asset,
+    normalize_for_facebook,
+    resolve_post_images,
+)
 
 ROOT=Path(__file__).resolve().parent
 READY=ROOT/"data"/"ready.jsonl"
@@ -134,6 +138,19 @@ def main():
         source_url=str(item.get("source_url") or "").strip()
         assets,image_diagnostics=resolve_post_images(telegram_image_urls,source_url,max_images=10)
 
+        if not assets:
+            card_title=str(item.get("card_title") or title or body).strip()
+            assets=[build_branded_fallback_asset(card_title)]
+            image_diagnostics["generated_fallback_used"]=True
+            image_diagnostics["selected"]=[{
+                "origin":"generated_fallback",
+                "width":assets[0].width,
+                "height":assets[0].height,
+                "url":assets[0].url,
+            }]
+        else:
+            image_diagnostics["generated_fallback_used"]=False
+
         photo_ids=[]
         media_mode="text"
         media_errors=[]
@@ -146,8 +163,14 @@ def main():
                 media_errors.append(str(exc))
                 print(f"WARNING high-quality image upload failed: {exc}",file=sys.stderr)
 
-        if photo_ids:
-            media_mode="images" if len(photo_ids)>1 else ("source_image" if assets and assets[0].origin=="source" else "image")
+        if not photo_ids:
+            raise RuntimeError("No image could be uploaded; refusing to publish a text-only post.")
+
+        media_mode="images" if len(photo_ids)>1 else (
+            "source_image" if assets and assets[0].origin=="source"
+            else "generated_card" if assets and assets[0].origin=="generated_fallback"
+            else "image"
+        )
 
         post_id=publish(page_id,token,message,photo_ids)
         first_comment=str(item.get("first_comment") or "").strip()
