@@ -1,12 +1,7 @@
-name: LIVE TEST — Telegram 1674-1676 to Facebook
+name: LIVE TEST — selected Telegram posts to Facebook
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "live-test-trigger.txt"
 
 permissions:
   contents: write
