@@ -422,18 +422,12 @@ def _variant_index(title: str, variant_key: int | str | None) -> int:
 
 
 def _load_card_background(index: int) -> Image.Image:
-    """Crop one of the four owner-supplied templates from the compact sprite."""
+    """Load one of the four owner-supplied card templates directly."""
     try:
-        with Image.open(CARD_BACKGROUNDS_PATH) as sprite:
-            sprite = sprite.convert("RGB")
-            tile_w = sprite.width // 2
-            tile_h = sprite.height // 2
-            left = (index % 2) * tile_w
-            top = (index // 2) * tile_h
-            card = sprite.crop((left, top, left + tile_w, top + tile_h))
-            return card.resize((1600, 900), Image.Resampling.LANCZOS)
+        path = CARD_BACKGROUND_FILES[index % len(CARD_BACKGROUND_FILES)]
+        with Image.open(path) as img:
+            return img.convert("RGB").resize((1600, 900), Image.Resampling.LANCZOS)
     except Exception:
-        # Do not block publication only because a visual asset failed.
         colors = ((25, 132, 255), (255, 45, 45), (245, 245, 245), (255, 204, 0))
         image = Image.new("RGB", (1600, 900), (4, 4, 4))
         draw = ImageDraw.Draw(image)
