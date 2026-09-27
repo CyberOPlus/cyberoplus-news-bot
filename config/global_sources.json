@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "generated_for": "Cybero Plus global cybersecurity news expansion",
+  "policy": {
+    "production_enabled": false,
+    "note": "Research registry only. Sources must be health-checked, deduplicated and source-attributed before enabling live publishing.",
+    "priority_order": [
+      "primary_official",
+      "research_vendor",
+      "national_cert",
+      "reputable_media",
+      "community_signal"
+    ]
+  },
+  "sources": [
+    {
+      "id": "cisa_kev",
+      "name": "CISA Known Exploited Vulnerabilities",
+      "tier": "primary_official",
+      "method": "json",
+      "url": "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json",
+      "enabled": false
+    },
+    {
+      "id": "circl_vulnerability_lookup",
+      "name": "CIRCL Vulnerability-Lookup",
+      "tier": "primary_official",
+      "method": "api",
+      "url": "https://vulnerability.circl.lu/api/",
+      "enabled": false
+    },
+    {
+      "id": "nvd",
+      "name": "NIST National Vulnerability Database",
+      "tier": "primary_official",
+      "method": "api",
+      "url": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+      "enabled": false
+    },
+    {
+      "id": "github_advisories",
+      "name": "GitHub Global Security Advisories",
+      "tier": "primary_official",
+      "method": "api",
+      "url": "https://api.github.com/advisories",
+      "enabled": false
+    },
+    {
+      "id": "cve_list_v5",
+      "name": "CVE Program Official CVE List V5",
+      "tier": "primary_official",
+      "method": "github",
+      "url": "https://github.com/CVEProject/cvelistV5",
+      "enabled": false
+    },
+    {
+      "id": "first_epss",
+      "name": "FIRST EPSS",
+      "tier": "primary_official",
+      "method": "api",
+      "url": "https://api.first.org/data/v1/epss",
+      "enabled": false
+    },
+    {
+      "id": "cert_eu",
+      "name": "CERT-EU Security Advisories and Threat Intelligence",
+      "tier": "national_cert",
+      "method": "rss_html",
+      "url": "https://cert.europa.eu/",
+      "enabled": false
+    },
+    {
+      "id": "cert_fr_alerts",
+      "name": "CERT-FR Alerts",
+      "tier": "national_cert",
+      "method": "html",
+      "url": "https://cert.ssi.gouv.fr/alerte/",
+      "enabled": false
+    },
+    {
+      "id": "cert_fr_advisories",
+      "name": "CERT-FR Advisories",
+      "tier": "national_cert",
+      "method": "html",
+      "url": "https://cert.ssi.gouv.fr/avis/",
+      "enabled": false
+    },
+    {
+      "id": "canada_cyber",
+      "name": "Canadian Centre for Cyber Security Alerts",
+      "tier": "national_cert",
+      "method": "web_feed",
+      "url": "https://www.cyber.gc.ca/en/alerts-advisories",
+      "enabled": false
+    },
+    {
+      "id": "singapore_csa",
+      "name": "Cyber Security Agency of Singapore Alerts",
+      "tier": "national_cert",
+      "method": "html",
+      "url": "https://www.csa.gov.sg/alerts-and-advisories/alerts/",
+      "enabled": false
+    },
+    {
+      "id": "cert_in",
+      "name": "CERT-In Advisories",
+      "tier": "national_cert",
+      "method": "html",
+      "url": "https://www.cert-in.org.in/",
+      "enabled": false
+    },
+    {
+      "id": "morocco_macert",
+      "name": "Morocco maCERT / DGSSI",
+      "tier": "national_cert",
+      "method": "html",
+      "url": "https://www.dgssi.gov.ma/fr/macert",
+      "enabled": false
+    },
+    {
+      "id": "google_threat_intelligence",
+      "name": "Google Threat Intelligence / Mandiant",
+      "tier": "research_vendor",
+      "method": "rss",
+      "url": "https://cloud.google.com/blog/topics/threat-intelligence",
+      "enabled": false
+    },
+    {
+      "id": "cloudflare_security",
+      "name": "Cloudflare Security",
+      "tier": "research_vendor",
+      "method": "rss",
+      "url": "https://blog.cloudflare.com/tag/security/",
+      "enabled": false
+    },
+    {
+      "id": "unit42",
+      "name": "Palo Alto Networks Unit 42",
+      "tier": "research_vendor",
+      "method": "html_rss_discovery",
+      "url": "https://unit42.paloaltonetworks.com/",
+      "enabled": false
+    },
+    {
+      "id": "fortinet_threat_research",
+      "name": "Fortinet Threat Research",
+      "tier": "research_vendor",
+      "method": "rss",
+      "url": "https://www.fortinet.com/rss-feeds",
+      "enabled": false
+    },
+    {
+      "id": "bleepingcomputer",
+      "name": "BleepingComputer",
+      "tier": "reputable_media",
+      "method": "rss",
+      "url": "https://www.bleepingcomputer.com/rss-feeds/",
+      "enabled": false
+    },
+    {
+      "id": "thehackernews",
+      "name": "The Hacker News",
+      "tier": "reputable_media",
+      "method": "rss",
+      "url": "https://thehackernews.com/",
+      "enabled": false
+    },
+    {
+      "id": "securityweek",
+      "name": "SecurityWeek",
+      "tier": "reputable_media",
+      "method": "rss_html",
+      "url": "https://www.securityweek.com/",
+      "enabled": false
+    }
+  ],
+  "github_tools": [
+    {
+      "repo": "DIYgod/RSSHub",
+      "role": "Generate RSS routes for sites that do not expose usable feeds"
+    },
+    {
+      "repo": "FreshRSS/FreshRSS",
+      "role": "Self-hosted feed aggregation and source management"
+    },
+    {
+      "repo": "miniflux/v2",
+      "role": "Minimal feed aggregation backend with API"
+    },
+    {
+      "repo": "huginn/huginn",
+      "role": "Web monitoring agents and event automation"
+    },
+    {
+      "repo": "n8n-io/n8n",
+      "role": "Workflow orchestration and integrations"
+    },
+    {
+      "repo": "adbar/trafilatura",
+      "role": "Article text and metadata extraction"
+    },
+    {
+      "repo": "kurtmckee/feedparser",
+      "role": "Python RSS and Atom parsing"
+    },
+    {
+      "repo": "AndyTheFactory/newspaper4k",
+      "role": "Article/title/metadata extraction fallback"
+    },
+    {
+      "repo": "dgtlmoon/changedetection.io",
+      "role": "Monitor pages without feeds for changes"
+    },
+    {
+      "repo": "vulnerability-lookup/vulnerability-lookup",
+      "role": "Correlate CVE/NVD/CERT/CSAF/KEV/EPSS sources behind one API"
+    },
+    {
+      "repo": "OpenCTI-Platform/opencti",
+      "role": "Threat-intelligence correlation and enrichment"
+    },
+    {
+      "repo": "MISP/MISP",
+      "role": "Threat-intelligence feeds and sharing"
+    },
+    {
+      "repo": "github/advisory-database",
+      "role": "Open-source vulnerability advisory data"
+    },
+    {
+      "repo": "CVEProject/cvelistV5",
+      "role": "Official CVE records"
+    },
+    {
+      "repo": "TURROKS/CVE_Prioritizer",
+      "role": "Reference logic for prioritizing CVEs with CVSS, EPSS and KEV"
+    },
+    {
+      "repo": "projectdiscovery/nuclei-templates",
+      "role": "Defensive signal that a vulnerability has community detection templates; not a primary news source"
+    }
+  ]
+}
