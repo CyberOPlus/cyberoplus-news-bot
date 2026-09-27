@@ -369,8 +369,12 @@ def normalize_for_facebook(asset: ImageAsset) -> ImageAsset:
 
 
 ROOT = Path(__file__).resolve().parent
-CARD_BACKGROUNDS_PATH = ROOT / "assets" / "card-backgrounds.webp"
-
+CARD_BACKGROUND_FILES = (
+    ROOT / "assets" / "temp1.png",
+    ROOT / "assets" / "temp2.png",
+    ROOT / "assets" / "temp3.png",
+    ROOT / "assets" / "temp4.png",
+)
 # Cairo is fetched only when a generated fallback card is needed. If the
 # network fetch fails, rendering falls back to DejaVu instead of blocking a post.
 CAIRO_FONT_URL = (
