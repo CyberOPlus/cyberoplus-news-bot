@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""
-Generate a Facebook Arabic preview from the newest Telegram item using Gemini.
+"""Prepare a faithful Moroccan-Darija Facebook post using resilient free AI fallbacks.
 
-This script NEVER publishes to Facebook.
-It only prints a structured preview for review.
+The public entry points are intentionally kept stable because ai_batch_processor.py
+imports normalize_item() and call_gemini().
+
+Provider order:
+1) Gemini free-tier models
+2) Groq free-plan models
+3) OpenRouter free router
+
+The first successful, valid structured result wins. Temporary rate limits and
+provider outages never delete a Telegram item; the batch processor retries later.
 """
 
 from __future__ import annotations
@@ -12,6 +19,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +32,58 @@ ROOT = Path(__file__).resolve().parent
 INBOX_PATH = ROOT / "data" / "inbox.jsonl"
 PROMPT_PATH = ROOT / "prompts" / "facebook_ar.txt"
 
-API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_MODEL = "gemini-3-flash-preview"
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+
+DEFAULT_GEMINI_MODELS = (
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
+    "gemini-3.1-flash-lite",
+)
+DEFAULT_GROQ_MODELS = (
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+)
+DEFAULT_OPENROUTER_MODELS = ("openrouter/free",)
+
 TIMEOUT_SECONDS = 60
-URL_RE = re.compile(r"https?://[^\\s<>()\\[\\]{}\\\"\']+")
+MAX_HTTP_ATTEMPTS = 2
+TRANSIENT_HTTP_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
+
+URL_RE = re.compile(r"https?://[^\\s<>()\\[\\]{}\\\"']+")
+SOURCE_NOTE_RE = re.compile(
+    r"(?im)^\\s*(?:source|via|credit|credits)\\s*:\\s*(.+?)\\s*$"
+)
+TITLE_SIGNAL_RE = re.compile(
+    r"(?im)^\\s*(?:‼️\\s*)?(?:BREAKING|ALERT|URGENT|EXCLUSIVE)\\s*:"
+)
+LATIN_RUN_RE = re.compile(
+    r"(?<![\\u2068\\w])"
+    r"([A-Za-z][A-Za-z0-9._+/#:&()'’\\-]*"
+    r"(?:\\s+[A-Za-z0-9][A-Za-z0-9._+/#:&()'’\\-]*){0,3})"
+    r"(?![\\w\\u2069])"
+)
+
+OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "facebook_post": {"type": "string"},
+        "first_comment": {"type": "string"},
+        "language": {"type": "string"},
+        "source_url": {"type": "string"},
+    },
+    "required": [
+        "title",
+        "facebook_post",
+        "first_comment",
+        "language",
+        "source_url",
+    ],
+    "additionalProperties": False,
+}
 
 
 def read_latest_item() -> dict[str, Any]:
@@ -46,15 +102,11 @@ def read_latest_item() -> dict[str, Any]:
     return max(messages, key=lambda item: item["telegram_id"])
 
 
-SOURCE_NOTE_RE = re.compile(
-    r"(?im)^\s*(?:source|via|credit|credits)\s*:\s*(.+?)\s*$"
-)
-
-
 def split_source_note(text: str) -> tuple[str, str]:
-    """Move plain-text attribution lines out of the Facebook body."""
+    """Move Source:/Via:/Credit: lines out of the Facebook body."""
     if not text:
         return "", ""
+
     notes: list[str] = []
 
     def take(match: re.Match[str]) -> str:
@@ -64,22 +116,25 @@ def split_source_note(text: str) -> tuple[str, str]:
         return ""
 
     cleaned = SOURCE_NOTE_RE.sub(take, text)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    cleaned = re.sub(r"\\n{3,}", "\\n\\n", cleaned).strip()
     return cleaned, " | ".join(notes)
 
 
 def normalize_item(item: dict[str, Any]) -> dict[str, Any]:
-    original_text = item.get("clean_text") or item.get("text") or item.get("raw_text") or ""
-    text, source_note = split_source_note(str(original_text))
-    title_signal = bool(
-        re.search(r"(?im)^\s*(?:‼️\s*)?(?:BREAKING|ALERT|URGENT|EXCLUSIVE)\s*:", text)
+    original_text = (
+        item.get("clean_text")
+        or item.get("text")
+        or item.get("raw_text")
+        or ""
     )
+    text, source_note = split_source_note(str(original_text))
+
     return {
         "telegram_id": item.get("telegram_id") or item.get("id"),
         "published_at": item.get("published_at"),
         "text": text,
         "source_note": source_note,
-        "has_explicit_title": title_signal,
+        "has_explicit_title": bool(TITLE_SIGNAL_RE.search(text)),
         "source_links": item.get("source_links") or [],
         "has_image": bool(item.get("has_image")),
         "has_video": bool(item.get("has_video")),
@@ -87,39 +142,143 @@ def normalize_item(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def extract_text(response: dict[str, Any]) -> str:
+def _model_list(
+    plural_env: str,
+    singular_env: str,
+    defaults: tuple[str, ...],
+) -> list[str]:
+    """Read comma-separated model fallbacks while remaining backward-compatible."""
+    plural = os.environ.get(plural_env, "").strip()
+    singular = os.environ.get(singular_env, "").strip()
+
+    raw: list[str] = []
+    if plural:
+        raw.extend(part.strip() for part in plural.split(","))
+    elif singular:
+        raw.append(singular)
+
+    raw.extend(defaults)
+
+    models: list[str] = []
+    for model in raw:
+        if model and model not in models:
+            models.append(model)
+    return models
+
+
+def _retry_delay(response: requests.Response, attempt: int) -> float:
+    value = response.headers.get("retry-after", "").strip()
+    if value:
+        try:
+            return min(max(float(value), 0.5), 8.0)
+        except ValueError:
+            pass
+    return min(2.0 ** attempt, 6.0)
+
+
+def _post_json(
+    url: str,
+    *,
+    headers: dict[str, str],
+    payload: dict[str, Any],
+    provider_label: str,
+) -> dict[str, Any]:
+    """POST JSON with a short retry for transient provider failures."""
+    last_status = 0
+    last_body = ""
+
+    for attempt in range(MAX_HTTP_ATTEMPTS):
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as exc:
+            if attempt + 1 < MAX_HTTP_ATTEMPTS:
+                time.sleep(min(2.0 ** attempt, 4.0))
+                continue
+            raise RuntimeError(f"{provider_label} network error: {exc}") from exc
+
+        last_status = response.status_code
+        last_body = response.text[:700]
+
+        if response.ok:
+            try:
+                return response.json()
+            except ValueError as exc:
+                raise RuntimeError(
+                    f"{provider_label} returned non-JSON HTTP response."
+                ) from exc
+
+        if (
+            response.status_code in TRANSIENT_HTTP_STATUS
+            and attempt + 1 < MAX_HTTP_ATTEMPTS
+        ):
+            time.sleep(_retry_delay(response, attempt))
+            continue
+
+        break
+
+    raise RuntimeError(
+        f"{provider_label} HTTP {last_status}: {last_body}"
+    )
+
+
+def _extract_gemini_text(response: dict[str, Any]) -> str:
     candidates = response.get("candidates") or []
     if not candidates:
         raise RuntimeError(
             "Gemini returned no candidate: "
-            + json.dumps(response, ensure_ascii=False)[:1000]
+            + json.dumps(response, ensure_ascii=False)[:900]
         )
 
     parts = candidates[0].get("content", {}).get("parts", [])
-    chunks = [part.get("text", "") for part in parts if part.get("text")]
+    chunks = [str(part.get("text") or "") for part in parts if part.get("text")]
     if not chunks:
         raise RuntimeError("Gemini returned a candidate without text.")
 
-    return "\n".join(chunks).strip()
+    return "\\n".join(chunks).strip()
 
 
 def parse_json_response(text: str) -> dict[str, Any]:
-    cleaned = text.strip()
+    """Accept strict JSON and defensively recover JSON from code fences."""
+    cleaned = str(text or "").strip()
+
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^\`\`\`(?:json)?\\s*", "", cleaned, flags=re.I)
+        cleaned = re.sub(r"\\s*\`\`\`$", "", cleaned)
 
     try:
         data = json.loads(cleaned)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"Gemini response was not valid JSON: {cleaned[:1200]}") from exc
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start < 0 or end <= start:
+            raise RuntimeError(
+                f"AI response was not valid JSON: {cleaned[:1000]}"
+            )
+        try:
+            data = json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(
+                f"AI response was not valid JSON: {cleaned[:1000]}"
+            ) from exc
 
-    required = {"title", "facebook_post", "first_comment", "language", "source_url"}
+    if not isinstance(data, dict):
+        raise RuntimeError("AI response JSON must be an object.")
+
+    required = set(OUTPUT_SCHEMA["required"])
     missing = required.difference(data)
     if missing:
-        raise RuntimeError(f"Gemini JSON is missing fields: {sorted(missing)}")
+        raise RuntimeError(f"AI JSON is missing fields: {sorted(missing)}")
+
+    for key in required:
+        if not isinstance(data.get(key), str):
+            data[key] = str(data.get(key) or "")
 
     return data
-
-
-LATIN_RUN_RE = re.compile(r"(?<![\u2068\w])([A-Za-z][A-Za-z0-9._+/#:&()'’\-]*(?:\s+[A-Za-z0-9][A-Za-z0-9._+/#:&()'’\-]*){0,3})(?![\w\u2069])")
 
 
 def isolate_latin_runs_rtl(text: str) -> str:
@@ -127,7 +286,6 @@ def isolate_latin_runs_rtl(text: str) -> str:
     if not text:
         return ""
 
-    # Do not touch URLs; they stay in comments, but protect them defensively.
     placeholders: dict[str, str] = {}
 
     def stash_url(match: re.Match[str]) -> str:
@@ -151,22 +309,27 @@ def isolate_latin_runs_rtl(text: str) -> str:
     return protected
 
 
+def _canonical_source_link(allowed_links: list[str]) -> str:
+    """The model never gets to invent or rewrite the source URL."""
+    for url in allowed_links:
+        value = str(url or "").strip()
+        if value.startswith(("http://", "https://")):
+            return value
+    return ""
+
+
 def enforce_source_policy(
     result: dict[str, Any],
     allowed_links: list[str],
     source_note: str = "",
     has_explicit_title: bool = False,
 ) -> dict[str, Any]:
-    allowed = [str(url) for url in allowed_links if url]
-    source_url = str(result.get("source_url") or "").strip()
-
-    if source_url not in allowed:
-        source_url = ""
+    source_url = _canonical_source_link(allowed_links)
+    note = str(source_note or "").strip()
 
     result["source_url"] = source_url
-    note = str(source_note or "").strip()
     if note and source_url:
-        result["first_comment"] = f"المصدر: {note}\n{source_url}"
+        result["first_comment"] = f"المصدر: {note}\\n{source_url}"
     elif note:
         result["first_comment"] = f"المصدر: {note}"
     elif source_url:
@@ -188,13 +351,20 @@ def enforce_source_policy(
 
     for field in ("title", "facebook_post"):
         value = str(result.get(field) or "")
+
         for fragment in forbidden_fragments:
             value = re.sub(re.escape(fragment), "", value, flags=re.I)
-        value = re.sub(r"\s{2,}", " ", value).strip()
-        if field in ("title", "facebook_post"):
-            value = isolate_latin_runs_rtl(value)
-        result[field] = value
 
+        # Original source URLs belong in the first comment, never in the body.
+        for url in allowed_links:
+            if url:
+                value = value.replace(str(url), "")
+
+        value = re.sub(r"[ \\t]{2,}", " ", value)
+        value = re.sub(r"\\n{3,}", "\\n\\n", value).strip()
+        result[field] = isolate_latin_runs_rtl(value)
+
+    result["language"] = "ary"
     return result
 
 
@@ -214,46 +384,17 @@ def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
         },
     }
     user_text = (
-        "نفّذ التعليمات على هذا العنصر وأرجع JSON صالح فقط.\n\n"
+        "طبق التعليمات على هاد المنشور ورجع JSON صالح فقط.\\n\\n"
         + json.dumps(user_payload, ensure_ascii=False, indent=2)
     )
     return instructions, user_text
 
 
-def _call_gemini_provider(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not available.")
-
-    model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL).strip()
-    instructions, user_text = _prompt_payload(item)
-
-    body = {
-        "systemInstruction": {"parts": [{"text": instructions}]},
-        "contents": [{"role": "user", "parts": [{"text": user_text}]}],
-        "generationConfig": {
-            "temperature": 0.2,
-            "responseMimeType": "application/json",
-        },
-    }
-
-    response = requests.post(
-        f"{API_BASE}/models/{model}:generateContent",
-        headers={
-            "x-goog-api-key": api_key,
-            "Content-Type": "application/json",
-        },
-        json=body,
-        timeout=TIMEOUT_SECONDS,
-    )
-
-    if not response.ok:
-        raise RuntimeError(
-            f"Gemini HTTP {response.status_code}: {response.text[:800]}"
-        )
-
-    generated = parse_json_response(extract_text(response.json()))
-    return f"gemini/{model}", enforce_source_policy(
+def _finalize(
+    generated: dict[str, Any],
+    item: dict[str, Any],
+) -> dict[str, Any]:
+    return enforce_source_policy(
         generated,
         item["source_links"],
         item.get("source_note", ""),
@@ -261,7 +402,39 @@ def _call_gemini_provider(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     )
 
 
-def _call_openai_compatible(
+def _call_one_gemini(
+    item: dict[str, Any],
+    api_key: str,
+    model: str,
+) -> tuple[str, dict[str, Any]]:
+    instructions, user_text = _prompt_payload(item)
+
+    body = {
+        "systemInstruction": {"parts": [{"text": instructions}]},
+        "contents": [{"role": "user", "parts": [{"text": user_text}]}],
+        "generationConfig": {
+            "temperature": 0.15,
+            "maxOutputTokens": 2048,
+            "responseMimeType": "application/json",
+            "thinkingConfig": {"thinkingLevel": "low"},
+        },
+    }
+
+    response = _post_json(
+        f"{GEMINI_API_BASE}/models/{model}:generateContent",
+        headers={
+            "x-goog-api-key": api_key,
+            "Content-Type": "application/json",
+        },
+        payload=body,
+        provider_label=f"gemini/{model}",
+    )
+
+    generated = parse_json_response(_extract_gemini_text(response))
+    return f"gemini/{model}", _finalize(generated, item)
+
+
+def _call_one_openai_compatible(
     *,
     provider: str,
     endpoint: str,
@@ -269,6 +442,8 @@ def _call_openai_compatible(
     model: str,
     item: dict[str, Any],
     extra_headers: dict[str, str] | None = None,
+    strict_schema: bool = False,
+    reasoning_effort: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
     instructions, user_text = _prompt_payload(item)
 
@@ -279,121 +454,142 @@ def _call_openai_compatible(
     if extra_headers:
         headers.update(extra_headers)
 
-    payload = {
+    payload: dict[str, Any] = {
         "model": model,
-        "temperature": 0.2,
+        "temperature": 0.15,
         "messages": [
             {"role": "system", "content": instructions},
             {"role": "user", "content": user_text},
         ],
     }
 
-    response = requests.post(
+    if strict_schema:
+        payload["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "cyberoplus_facebook_post",
+                "strict": True,
+                "schema": OUTPUT_SCHEMA,
+            },
+        }
+    else:
+        payload["response_format"] = {"type": "json_object"}
+
+    if reasoning_effort:
+        payload["reasoning_effort"] = reasoning_effort
+
+    response = _post_json(
         endpoint,
         headers=headers,
-        json=payload,
-        timeout=TIMEOUT_SECONDS,
+        payload=payload,
+        provider_label=f"{provider}/{model}",
     )
-    if not response.ok:
-        raise RuntimeError(
-            f"{provider} HTTP {response.status_code}: {response.text[:800]}"
-        )
 
-    data = response.json()
     try:
-        text = data["choices"][0]["message"]["content"]
+        text = response["choices"][0]["message"]["content"]
     except Exception as exc:
-        raise RuntimeError(f"{provider} returned an unexpected response.") from exc
+        raise RuntimeError(
+            f"{provider}/{model} returned an unexpected response."
+        ) from exc
 
     generated = parse_json_response(str(text))
-    return f"{provider}/{model}", enforce_source_policy(
-        generated,
-        item["source_links"],
-        item.get("source_note", ""),
-        bool(item.get("has_explicit_title")),
-    )
+    return f"{provider}/{model}", _finalize(generated, item)
 
 
-def _call_groq_provider(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    api_key = os.environ.get("GROQ_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("GROQ_API_KEY is not available.")
+def _provider_attempts(item: dict[str, Any]):
+    gemini_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
 
-    model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
-    return _call_openai_compatible(
-        provider="groq",
-        endpoint="https://api.groq.com/openai/v1/chat/completions",
-        api_key=api_key,
-        model=model,
-        item=item,
-    )
+    if gemini_key:
+        for model in _model_list(
+            "GEMINI_MODELS",
+            "GEMINI_MODEL",
+            DEFAULT_GEMINI_MODELS,
+        ):
+            yield (
+                f"gemini/{model}",
+                lambda model=model: _call_one_gemini(
+                    item,
+                    gemini_key,
+                    model,
+                ),
+            )
 
+    if groq_key:
+        for model in _model_list(
+            "GROQ_MODELS",
+            "GROQ_MODEL",
+            DEFAULT_GROQ_MODELS,
+        ):
+            # Translation does not need deep chain-of-thought.
+            effort = "none" if model.startswith("qwen/") else "low"
+            yield (
+                f"groq/{model}",
+                lambda model=model, effort=effort: _call_one_openai_compatible(
+                    provider="groq",
+                    endpoint=GROQ_ENDPOINT,
+                    api_key=groq_key,
+                    model=model,
+                    item=item,
+                    strict_schema=True,
+                    reasoning_effort=effort,
+                ),
+            )
 
-def _call_openrouter_provider(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not available.")
-
-    model = os.environ.get(
-        "OPENROUTER_MODEL",
-        "meta-llama/llama-3.3-70b-instruct:free",
-    ).strip()
-
-    return _call_openai_compatible(
-        provider="openrouter",
-        endpoint="https://openrouter.ai/api/v1/chat/completions",
-        api_key=api_key,
-        model=model,
-        item=item,
-        extra_headers={
-            "HTTP-Referer": "https://www.cyberoplus.com/",
-            "X-Title": "Cybero Plus News Bot",
-        },
-    )
+    if openrouter_key:
+        for model in _model_list(
+            "OPENROUTER_MODELS",
+            "OPENROUTER_MODEL",
+            DEFAULT_OPENROUTER_MODELS,
+        ):
+            yield (
+                f"openrouter/{model}",
+                lambda model=model: _call_one_openai_compatible(
+                    provider="openrouter",
+                    endpoint=OPENROUTER_ENDPOINT,
+                    api_key=openrouter_key,
+                    model=model,
+                    item=item,
+                    extra_headers={
+                        "HTTP-Referer": "https://www.cyberoplus.com/",
+                        "X-Title": "Cybero Plus News Bot",
+                    },
+                    strict_schema=False,
+                ),
+            )
 
 
 def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Compatibility entry point used by the batch processor.
-
-    Tries each configured AI provider in order. Missing keys are skipped.
-    If a provider is rate-limited or temporarily fails, the next one is tried.
-    Nothing is lost when all providers fail: the batch processor keeps the
-    Telegram item unprepared so a later workflow run can retry it.
-    """
-
-    providers = [
-        _call_gemini_provider,
-        _call_groq_provider,
-        _call_openrouter_provider,
-    ]
+    """Compatibility entry point: run the full resilient AI fallback chain."""
+    attempts = list(_provider_attempts(item))
+    if not attempts:
+        raise RuntimeError("No AI provider API key is configured.")
 
     errors: list[str] = []
-    configured = 0
 
-    for provider in providers:
+    for label, call in attempts:
         try:
-            if provider is _call_gemini_provider and os.environ.get("GEMINI_API_KEY", "").strip():
-                configured += 1
-            elif provider is _call_groq_provider and os.environ.get("GROQ_API_KEY", "").strip():
-                configured += 1
-            elif provider is _call_openrouter_provider and os.environ.get("OPENROUTER_API_KEY", "").strip():
-                configured += 1
-            else:
-                continue
-
-            return provider(item)
-        except Exception as exc:
-            errors.append(f"{provider.__name__}: {exc}")
+            model, result = call()
             print(
-                f"WARNING: AI provider failed, trying fallback: {provider.__name__}: {exc}",
+                json.dumps(
+                    {
+                        "ai_provider_selected": model,
+                        "fallback_failures_before_success": len(errors),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return model, result
+        except Exception as exc:
+            errors.append(f"{label}: {exc}")
+            print(
+                f"WARNING: AI attempt failed, trying next model: {label}: {exc}",
                 file=sys.stderr,
             )
 
-    if configured == 0:
-        raise RuntimeError("No AI provider API key is configured.")
-
     raise RuntimeError(
-        "All configured AI providers failed: " + " | ".join(errors)
+        "All configured AI models failed: " + " | ".join(errors)
     )
 
 
