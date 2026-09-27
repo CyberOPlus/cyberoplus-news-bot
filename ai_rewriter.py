@@ -53,18 +53,22 @@ TIMEOUT_SECONDS = 60
 MAX_HTTP_ATTEMPTS = 2
 TRANSIENT_HTTP_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
-URL_RE = re.compile(r"https?://[^\\s<>()\\[\\]{}\\\"']+")
+URL_RE = re.compile(r"https?://[^\s<>()\[\]{}\"']+")
 SOURCE_NOTE_RE = re.compile(
-    r"(?im)^\\s*(?:source|via|credit|credits)\\s*:\\s*(.+?)\\s*$"
+    r"(?im)^\s*(?:source|via|credit|credits)\s*:\s*(.+?)\s*$"
 )
 TITLE_SIGNAL_RE = re.compile(
-    r"(?im)^\\s*(?:‼️\\s*)?(?:BREAKING|ALERT|URGENT|EXCLUSIVE)\\s*:"
+    r"(?im)^\s*(?:‼️\s*)?(?:BREAKING|ALERT|URGENT|EXCLUSIVE)\s*:"
+)
+PROMO_RE = re.compile(
+    r"(?i)(?:\s*(?:stay tuned(?: for (?:more|updates?|more info(?:rmation)?))?|"
+    r"follow us(?: for (?:more|updates?))?|more updates soon)\.?\s*)$"
 )
 LATIN_RUN_RE = re.compile(
-    r"(?<![\\u2068\\w])"
-    r"([A-Za-z][A-Za-z0-9._+/#:&()'’\\-]*"
-    r"(?:\\s+[A-Za-z0-9][A-Za-z0-9._+/#:&()'’\\-]*){0,3})"
-    r"(?![\\w\\u2069])"
+    r"(?<![\u2068\w])"
+    r"([A-Za-z][A-Za-z0-9._+/#:&()'’\-]*"
+    r"(?:\s+[A-Za-z0-9][A-Za-z0-9._+/#:&()'’\-]*){0,3})"
+    r"(?![\w\u2069])"
 )
 
 OUTPUT_SCHEMA = {
@@ -124,7 +128,8 @@ def split_source_note(text: str) -> tuple[str, str]:
         return ""
 
     cleaned = SOURCE_NOTE_RE.sub(take, text)
-    cleaned = re.sub(r"\\n{3,}", "\\n\\n", cleaned).strip()
+    cleaned = PROMO_RE.sub("", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
     return cleaned, " | ".join(notes)
 
 
@@ -255,8 +260,8 @@ def parse_json_response(text: str) -> dict[str, Any]:
     cleaned = str(text or "").strip()
 
     if cleaned.startswith("```"):
-        cleaned = re.sub(r"^\`\`\`(?:json)?\\s*", "", cleaned, flags=re.I)
-        cleaned = re.sub(r"\\s*\`\`\`$", "", cleaned)
+        cleaned = re.sub(r"^\`\`\`(?:json)?\s*", "", cleaned, flags=re.I)
+        cleaned = re.sub(r"\s*\`\`\`$", "", cleaned)
 
     try:
         data = json.loads(cleaned)
@@ -375,8 +380,9 @@ def enforce_source_policy(
         result["first_comment"] = ""
         result["link_role"] = "none"
 
-    if not has_explicit_title:
-        result["title"] = ""
+    # Keep the Facebook body faithful to the source. The separate title field
+    # is never used for publication; card_title is only for a generated image.
+    result["title"] = ""
 
     forbidden_fragments = (
         "internationalcyberdigest.com",
@@ -398,20 +404,23 @@ def enforce_source_policy(
             if url:
                 value = value.replace(str(url), "")
 
-        value = re.sub(r"[ \\t]{2,}", " ", value)
-        value = re.sub(r"\\n{3,}", "\\n\\n", value).strip()
+        value = re.sub(r"[ \t]{2,}", " ", value)
+        value = re.sub(r"\n{3,}", "\n\n", value).strip()
         result[field] = isolate_latin_runs_rtl(value)
 
     # The link itself lives in the first comment. Add one short contextual cue
     # only when a link exists, so readers know where to find the referenced item.
-    if source_url:
+    if source_url or note:
         cue = {
             "source": "المصدر خليتو ليكم فالتعليق الأول.",
             "tool": "الأداة خليتها ليكم فالتعليق الأول.",
             "download": "رابط التحميل خليتو ليكم فالتعليق الأول.",
             "project": "رابط المشروع خليتو ليكم فالتعليق الأول.",
             "more_info": "الرابط خليتو ليكم فالتعليق الأول.",
-        }.get(result["link_role"], "الرابط خليتو ليكم فالتعليق الأول.")
+        }.get(
+            result["link_role"],
+            "المصدر خليتو ليكم فالتعليق الأول." if note else "الرابط خليتو ليكم فالتعليق الأول.",
+        )
         body = str(result.get("facebook_post") or "").strip()
         if cue not in body:
             result["facebook_post"] = (body + "\\n\\n" + cue).strip()
@@ -439,7 +448,7 @@ def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
         },
     }
     user_text = (
-        "طبق التعليمات على هاد المنشور ورجع JSON صالح فقط.\\n\\n"
+        "طبق التعليمات على هاد المنشور ورجع JSON صالح فقط.\n\n"
         + json.dumps(user_payload, ensure_ascii=False, indent=2)
     )
     return instructions, user_text
