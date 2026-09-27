@@ -202,6 +202,46 @@ def _jsonld_images(value: Any, base: str) -> list[str]:
     return found
 
 
+def telegram_image_candidates(post_url: str) -> list[str]:
+    """Refresh attached Telegram photo URLs from the stable message URL."""
+    if not post_url:
+        return []
+
+    try:
+        response = requests.get(
+            post_url,
+            params={"embed": "1", "single": "1"},
+            headers=HEADERS,
+            timeout=TIMEOUT,
+        )
+        response.raise_for_status()
+    except Exception:
+        return []
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    urls: list[str] = []
+
+    for media_node in soup.select(
+        ".tgme_widget_message_photo_wrap, .tgme_widget_message_service_photo"
+    ):
+        style = str(media_node.get("style", ""))
+        match = re.search(
+            r"background-image\s*:\s*url\(['\"]?(.*?)['\"]?\)",
+            style,
+        )
+        if match:
+            url = _clean_url(match.group(1), response.url)
+            if url and url not in urls:
+                urls.append(url)
+
+        for image in media_node.select("img[src]"):
+            url = _clean_url(str(image.get("src", "")), response.url)
+            if url and url.startswith(("http://", "https://")) and url not in urls:
+                urls.append(url)
+
+    return urls
+
+
 def source_image_candidates(source_url: str) -> list[str]:
     if not source_url:
         return []

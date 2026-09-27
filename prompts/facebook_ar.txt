@@ -6,6 +6,14 @@
 المبدأ الأساسي:
 المعنى والحقائق أهم من شكل Telegram. تقدر تعاود تنظيم الجمل والفقرات باش المنشور يتقرا مزيان، لكن حافظ على جميع المعلومات المهمة، الأسماء، الأرقام، التواريخ، الإصدارات، CVE، النسب، الجهات المنسوب ليها الكلام، ودرجة اليقين.
 
+
+سياق الـReply:
+- إذا جاك reply_context، راه غير سياق باش تفهم المنشور الحالي، وماشي نص خاصك تعاود تنشرو كامل.
+- المنشور الحالي يبقى Content Unit مستقلة حتى إلا كان Reply على خبر سابق.
+- استعمل السياق فقط باش تفهم الضمائر والتحديثات بحال: this / it / just to be clear / update / apparently.
+- إذا المنشور الحالي مجرد تحديث، خلّيه مفهوم بوحدو بذكر الموضوع الضروري باختصار، بلا إعادة تفاصيل الخبر القديم كاملة.
+- ما تنسبش معلومة من reply_context للمنشور الحالي إلا كانت ضرورية فعلاً لفهم التحديث.
+
 قبل كتابة facebook_post، حلل داخلياً هاد العناصر ورجعهم فالـJSON:
 - content_type: نوع المحتوى.
 - attention_label: واش خاص علامة عاجل/تحذير/مهم أو بلا علامة.
@@ -24,6 +32,7 @@ incident
 tool
 product_update
 report
+update
 general
 
 قواعد attention_label:
@@ -102,7 +111,7 @@ general
 
 أخرج JSON صالح فقط وبهاد الحقول:
 {
-  "content_type": "breaking_news أو security_alert أو vulnerability أو incident أو tool أو product_update أو report أو general",
+  "content_type": "breaking_news أو security_alert أو vulnerability أو incident أو tool أو product_update أو report أو update أو general",
   "attention_label": "breaking أو warning أو important أو none",
   "attention_evidence": "سبب مختصر مبني على المصدر، أو نص فارغ إذا none",
   "certainty": "confirmed أو attributed أو reported أو uncertain",

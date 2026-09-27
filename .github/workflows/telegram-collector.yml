@@ -13,6 +13,8 @@ on:
       - "ai_batch_processor.py"
       - "ai_rewriter.py"
       - "facebook_publisher.py"
+      - "image_resolver.py"
+      - "video_processor.py"
       - "prompts/facebook_ar.txt"
       - "requirements.txt"
       - ".github/workflows/telegram-collector.yml"
@@ -57,6 +59,44 @@ jobs:
           OPENROUTER_MODELS: openrouter/free
         run: python ai_batch_processor.py
 
+      - name: Install FFmpeg only when the next post needs video
+        shell: bash
+        run: |
+          if python - <<'PY'
+          import json
+          from pathlib import Path
+
+          def rows(path):
+              if not path.exists():
+                  return []
+              return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+          ready = rows(Path("data/ready.jsonl"))
+          events = rows(Path("data/facebook_events.jsonl"))
+          published = {
+              int(row.get("telegram_id", 0) or 0)
+              for row in events
+              if row.get("event") == "published"
+          }
+          pending = [
+              row
+              for row in sorted(ready, key=lambda item: int(item.get("telegram_id", 0) or 0))
+              if row.get("status") == "ready"
+              and int(row.get("telegram_id", 0) or 0) not in published
+          ]
+          needs_video = bool(pending and (pending[0].get("media") or {}).get("has_video"))
+          raise SystemExit(0 if needs_video else 1)
+          PY
+          then
+            if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+              sudo apt-get update -qq
+              sudo apt-get install -y --no-install-recommends ffmpeg
+            fi
+            ffmpeg -version | head -n 1
+          else
+            echo "The next pending post does not need FFmpeg."
+          fi
+
       - name: Publish next ready item to Facebook
         env:
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
@@ -78,4 +118,5 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           git add data/state.json data/inbox.jsonl data/ai_state.json data/ready.jsonl data/facebook_events.jsonl
           git commit -m "Persist Facebook publishing pipeline state"
+          git pull --rebase origin main
           git push

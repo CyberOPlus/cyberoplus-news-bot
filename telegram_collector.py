@@ -188,6 +188,49 @@ def extract_image_urls(node) -> list[str]:
     return urls
 
 
+def extract_video_media(node) -> tuple[list[str], list[str]]:
+    """Extract direct Telegram video URLs and poster thumbnails."""
+    video_urls: list[str] = []
+    thumbnail_urls: list[str] = []
+
+    for player in node.select(
+        ".tgme_widget_message_video_player, .tgme_widget_message_video_wrap"
+    ):
+        for video in player.select("video[src]"):
+            url = str(video.get("src", "")).strip().replace("&amp;", "&")
+            if url.startswith(("http://", "https://")) and url not in video_urls:
+                video_urls.append(url)
+
+        thumb = player.select_one(".tgme_widget_message_video_thumb")
+        if thumb:
+            url = extract_photo_url(str(thumb.get("style", "")))
+            if url and url not in thumbnail_urls:
+                thumbnail_urls.append(url)
+
+        for image in player.select("img[src]"):
+            url = str(image.get("src", "")).strip().replace("&amp;", "&")
+            if url.startswith(("http://", "https://")) and url not in thumbnail_urls:
+                thumbnail_urls.append(url)
+
+    return video_urls, thumbnail_urls
+
+
+def classify_media(
+    image_urls: list[str],
+    has_video: bool,
+    has_document: bool,
+) -> str:
+    if has_video and image_urls:
+        return "mixed"
+    if has_video:
+        return "video"
+    if image_urls:
+        return "image"
+    if has_document:
+        return "document"
+    return "text"
+
+
 def fetch_page(before: int | None = None) -> str:
     url = PUBLIC_URL if before is None else f"{PUBLIC_URL}?before={before}"
     response = requests.get(url, headers=HEADERS, timeout=TIMEOUT_SECONDS)
@@ -220,7 +263,7 @@ def parse_messages(html: str) -> list[dict[str, Any]]:
         reply_node = node.select_one(".tgme_widget_message_reply[href]")
         if reply_node:
             reply_href = str(reply_node.get("href", ""))
-            match = re.search(r"/(\\d+)(?:\\?.*)?$", reply_href)
+            match = re.search(r"/(\d+)(?:\?.*)?$", reply_href)
             if match:
                 reply_to_id = int(match.group(1))
 
@@ -247,12 +290,15 @@ def parse_messages(html: str) -> list[dict[str, Any]]:
         image_urls = extract_image_urls(node)
         image_url = image_urls[0] if image_urls else None
 
-        has_video = node.select_one(
+        video_urls, video_thumbnail_urls = extract_video_media(node)
+        has_video = bool(video_urls) or node.select_one(
             ".tgme_widget_message_video_player, "
             ".tgme_widget_message_video_wrap"
         ) is not None
 
         has_document = node.select_one(".tgme_widget_message_document") is not None
+        telegram_post_url = f"https://t.me/{CHANNEL}/{post_id}"
+        media_type = classify_media(image_urls, has_video, has_document)
 
         messages.append(
             {
@@ -268,7 +314,12 @@ def parse_messages(html: str) -> list[dict[str, Any]]:
                 "image_url": image_url,
                 "image_urls": image_urls,
                 "has_video": has_video,
+                "video_url": video_urls[0] if video_urls else None,
+                "video_urls": video_urls,
+                "video_thumbnail_urls": video_thumbnail_urls,
                 "has_document": has_document,
+                "media_type": media_type,
+                "telegram_post_url": telegram_post_url,
                 "status": "collected",
             }
         )
@@ -359,6 +410,8 @@ def main() -> int:
                     "has_image": item["has_image"],
                     "has_video": item["has_video"],
                     "has_document": item["has_document"],
+                    "media_type": item.get("media_type"),
+                    "video_candidates": len(item.get("video_urls") or []),
                 }
                 for item in new_messages
             ],

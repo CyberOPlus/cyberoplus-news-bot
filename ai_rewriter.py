@@ -76,7 +76,7 @@ OUTPUT_SCHEMA = {
             "type": "string",
             "enum": [
                 "breaking_news", "security_alert", "vulnerability", "incident",
-                "tool", "product_update", "report", "general"
+                "tool", "product_update", "report", "update", "general"
             ],
         },
         "attention_label": {
@@ -125,7 +125,7 @@ OUTPUT_SCHEMA = {
 
 CONTENT_TYPES = {
     "breaking_news", "security_alert", "vulnerability", "incident",
-    "tool", "product_update", "report", "general",
+    "tool", "product_update", "report", "update", "general",
 }
 ATTENTION_LABELS = {"breaking", "warning", "important", "none"}
 CERTAINTY_LEVELS = {"confirmed", "attributed", "reported", "uncertain"}
@@ -215,6 +215,7 @@ def normalize_item(item: dict[str, Any]) -> dict[str, Any]:
         "source_note": source_note,
         "has_explicit_title": bool(TITLE_SIGNAL_RE.search(text)),
         "source_links": item.get("source_links") or [],
+        "reply_context": item.get("reply_context") or [],
         "has_image": bool(item.get("has_image")),
         "has_video": bool(item.get("has_video")),
         "has_document": bool(item.get("has_document")),
@@ -720,6 +721,7 @@ def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
         "source_links": item["source_links"],
         "source_note": item.get("source_note", ""),
         "has_explicit_title": bool(item.get("has_explicit_title")),
+        "reply_context": item.get("reply_context") or [],
         "media": {
             "has_image": item["has_image"],
             "has_video": item["has_video"],

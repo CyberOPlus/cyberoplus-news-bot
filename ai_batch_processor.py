@@ -93,85 +93,65 @@ def existing_ready_ids() -> set[int]:
     return ids
 
 
-def group_reply_chains(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Merge explicit Telegram reply chains into one translation unit.
-
-    Only explicit reply relationships are merged. We deliberately do NOT merge
-    merely because two posts are consecutive in time; news channels often post
-    unrelated breaking items minutes apart.
-    """
+def enrich_reply_context(
+    rows: list[dict[str, Any]],
+    all_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep every Telegram message separate while attaching parent context."""
     by_id = {
         int(row["telegram_id"]): row
-        for row in rows
-        if int(row.get("telegram_id", 0)) > 0
+        for row in all_rows
+        if int(row.get("telegram_id", 0) or 0) > 0
     }
-    parent: dict[int, int] = {}
-    for tid, row in by_id.items():
-        try:
-            rid = int(row.get("reply_to_id") or 0)
-        except (TypeError, ValueError):
-            rid = 0
-        if rid in by_id and rid != tid:
-            parent[tid] = rid
 
-    def root_of(tid: int) -> int:
+    enriched: list[dict[str, Any]] = []
+    for row in rows:
+        current = dict(row)
+        tid = int(current.get("telegram_id", 0) or 0)
+        current["telegram_ids"] = [tid] if tid else []
+
+        context: list[dict[str, Any]] = []
         seen: set[int] = set()
-        cur = tid
-        while cur in parent and cur not in seen:
-            seen.add(cur)
-            cur = parent[cur]
-        return cur
+        try:
+            parent_id = int(current.get("reply_to_id") or 0)
+        except (TypeError, ValueError):
+            parent_id = 0
 
-    groups: dict[int, list[dict[str, Any]]] = {}
-    for tid, row in by_id.items():
-        groups.setdefault(root_of(tid), []).append(row)
+        for _ in range(3):
+            if not parent_id or parent_id in seen:
+                break
+            seen.add(parent_id)
+            parent = by_id.get(parent_id)
+            if not parent:
+                break
 
-    merged: list[dict[str, Any]] = []
-    for root_id, members in groups.items():
-        members.sort(key=lambda row: int(row["telegram_id"]))
-        if len(members) == 1:
-            single = dict(members[0])
-            single["telegram_ids"] = [int(single["telegram_id"])]
-            merged.append(single)
-            continue
+            context.append(
+                {
+                    "telegram_id": parent_id,
+                    "text": str(
+                        parent.get("clean_text")
+                        or parent.get("raw_text")
+                        or ""
+                    ).strip()[:4000],
+                    "source_links": parent.get("source_links") or [],
+                    "media_type": parent.get("media_type") or (
+                        "video" if parent.get("has_video")
+                        else "image" if parent.get("has_image")
+                        else "document" if parent.get("has_document")
+                        else "text"
+                    ),
+                }
+            )
+            try:
+                parent_id = int(parent.get("reply_to_id") or 0)
+            except (TypeError, ValueError):
+                parent_id = 0
 
-        text_parts = [
-            str(row.get("clean_text") or row.get("raw_text") or "").strip()
-            for row in members
-            if str(row.get("clean_text") or row.get("raw_text") or "").strip()
-        ]
+        current["reply_context"] = list(reversed(context))
+        enriched.append(current)
 
-        source_links: list[str] = []
-        image_urls: list[str] = []
-        for row in members:
-            for url in row.get("source_links") or []:
-                if url and url not in source_links:
-                    source_links.append(url)
-            for url in row.get("image_urls") or []:
-                if url and url not in image_urls:
-                    image_urls.append(url)
-            if row.get("image_url") and row["image_url"] not in image_urls:
-                image_urls.append(row["image_url"])
+    return sorted(enriched, key=lambda row: int(row.get("telegram_id", 0) or 0))
 
-        merged.append(
-            {
-                **members[-1],
-                "telegram_id": int(members[-1]["telegram_id"]),
-                "telegram_ids": [int(row["telegram_id"]) for row in members],
-                "published_at": members[0].get("published_at"),
-                "clean_text": "\n\n".join(text_parts),
-                "raw_text": "\n\n".join(text_parts),
-                "source_links": source_links,
-                "has_image": bool(image_urls),
-                "image_url": image_urls[0] if image_urls else None,
-                "image_urls": image_urls,
-                "has_video": any(bool(row.get("has_video")) for row in members),
-                "has_document": any(bool(row.get("has_document")) for row in members),
-                "thread_root_id": root_id,
-            }
-        )
-
-    return sorted(merged, key=lambda row: int(row["telegram_id"]))
 
 
 def append_ready(row: dict[str, Any]) -> None:
@@ -184,6 +164,7 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
     item = normalize_item(raw_item)
 
     if not str(item.get("text") or "").strip():
+        supported_media = bool(raw_item.get("has_image") or raw_item.get("has_video"))
         return {
             "telegram_id": int(item["telegram_id"]),
             "telegram_ids": [
@@ -192,7 +173,7 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
             ],
             "source_published_at": item.get("published_at"),
             "prepared_at": now_iso(),
-            "status": "media_only",
+            "status": "ready" if supported_media else "unsupported_media",
             "language": "ar",
             "title": "",
             "facebook_post": "",
@@ -207,7 +188,19 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
                     [raw_item.get("image_url")] if raw_item.get("image_url") else []
                 ),
                 "has_video": bool(raw_item.get("has_video")),
+                "video_url": raw_item.get("video_url"),
+                "video_urls": raw_item.get("video_urls") or (
+                    [raw_item.get("video_url")] if raw_item.get("video_url") else []
+                ),
+                "video_thumbnail_urls": raw_item.get("video_thumbnail_urls") or [],
                 "has_document": bool(raw_item.get("has_document")),
+                "media_type": raw_item.get("media_type") or (
+                    "video" if raw_item.get("has_video")
+                    else "image" if raw_item.get("has_image")
+                    else "document" if raw_item.get("has_document")
+                    else "text"
+                ),
+                "telegram_post_url": raw_item.get("telegram_post_url") or "",
             },
             "ai_model": "not_required",
         }
@@ -249,7 +242,19 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
                         [raw_item.get("image_url")] if raw_item.get("image_url") else []
                     ),
                     "has_video": bool(raw_item.get("has_video")),
+                    "video_url": raw_item.get("video_url"),
+                    "video_urls": raw_item.get("video_urls") or (
+                        [raw_item.get("video_url")] if raw_item.get("video_url") else []
+                    ),
+                    "video_thumbnail_urls": raw_item.get("video_thumbnail_urls") or [],
                     "has_document": bool(raw_item.get("has_document")),
+                    "media_type": raw_item.get("media_type") or (
+                        "video" if raw_item.get("has_video")
+                        else "image" if raw_item.get("has_image")
+                        else "document" if raw_item.get("has_document")
+                        else "text"
+                    ),
+                    "telegram_post_url": raw_item.get("telegram_post_url") or "",
                 },
                 "ai_model": model,
             }
@@ -266,9 +271,13 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
 
 def main() -> int:
     try:
-        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY is not available.")
+        available_ai_keys = [
+            os.environ.get("GEMINI_API_KEY", "").strip(),
+            os.environ.get("GROQ_API_KEY", "").strip(),
+            os.environ.get("OPENROUTER_API_KEY", "").strip(),
+        ]
+        if not any(available_ai_keys):
+            raise RuntimeError("No AI provider API key is available.")
 
         inbox = read_jsonl(INBOX_PATH)
         if not inbox:
@@ -298,7 +307,7 @@ def main() -> int:
             if int(row.get("telegram_id", 0)) > 0
             and int(row["telegram_id"]) not in ready_ids
         ]
-        pending = group_reply_chains(unprocessed)
+        pending = enrich_reply_context(unprocessed, ordered)
 
         if not pending:
             newest = max(int(row.get("telegram_id", 0)) for row in ordered)
