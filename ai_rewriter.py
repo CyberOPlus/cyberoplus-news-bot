@@ -153,14 +153,8 @@ def enforce_source_policy(result: dict[str, Any], allowed_links: list[str]) -> d
     return result
 
 
-def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not available.")
-
-    model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL).strip()
+def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
     instructions = PROMPT_PATH.read_text(encoding="utf-8")
-
     user_payload = {
         "telegram_id": item["telegram_id"],
         "published_at": item["published_at"],
@@ -172,26 +166,26 @@ def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             "has_document": item["has_document"],
         },
     }
+    user_text = (
+        "نفّذ التعليمات على هذا العنصر وأرجع JSON صالح فقط.\n\n"
+        + json.dumps(user_payload, ensure_ascii=False, indent=2)
+    )
+    return instructions, user_text
+
+
+def _call_gemini_provider(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not available.")
+
+    model = os.environ.get("GEMINI_MODEL", DEFAULT_MODEL).strip()
+    instructions, user_text = _prompt_payload(item)
 
     body = {
-        "systemInstruction": {
-            "parts": [{"text": instructions}]
-        },
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "text": (
-                            "أعد صياغة هذا العنصر حسب التعليمات.\n\n"
-                            + json.dumps(user_payload, ensure_ascii=False, indent=2)
-                        )
-                    }
-                ],
-            }
-        ],
+        "systemInstruction": {"parts": [{"text": instructions}]},
+        "contents": [{"role": "user", "parts": [{"text": user_text}]}],
         "generationConfig": {
-            "temperature": 0.35,
+            "temperature": 0.2,
             "responseMimeType": "application/json",
         },
     }
@@ -207,14 +201,143 @@ def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     )
 
     if not response.ok:
-        safe_body = response.text[:2000]
         raise RuntimeError(
-            f"Gemini API failed with HTTP {response.status_code}: {safe_body}"
+            f"Gemini HTTP {response.status_code}: {response.text[:800]}"
         )
 
-    raw = response.json()
-    generated = parse_json_response(extract_text(raw))
-    return model, enforce_source_policy(generated, item["source_links"])
+    generated = parse_json_response(extract_text(response.json()))
+    return f"gemini/{model}", enforce_source_policy(generated, item["source_links"])
+
+
+def _call_openai_compatible(
+    *,
+    provider: str,
+    endpoint: str,
+    api_key: str,
+    model: str,
+    item: dict[str, Any],
+    extra_headers: dict[str, str] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    instructions, user_text = _prompt_payload(item)
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
+
+    payload = {
+        "model": model,
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": user_text},
+        ],
+    }
+
+    response = requests.post(
+        endpoint,
+        headers=headers,
+        json=payload,
+        timeout=TIMEOUT_SECONDS,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"{provider} HTTP {response.status_code}: {response.text[:800]}"
+        )
+
+    data = response.json()
+    try:
+        text = data["choices"][0]["message"]["content"]
+    except Exception as exc:
+        raise RuntimeError(f"{provider} returned an unexpected response.") from exc
+
+    generated = parse_json_response(str(text))
+    return f"{provider}/{model}", enforce_source_policy(generated, item["source_links"])
+
+
+def _call_groq_provider(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    api_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY is not available.")
+
+    model = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile").strip()
+    return _call_openai_compatible(
+        provider="groq",
+        endpoint="https://api.groq.com/openai/v1/chat/completions",
+        api_key=api_key,
+        model=model,
+        item=item,
+    )
+
+
+def _call_openrouter_provider(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not available.")
+
+    model = os.environ.get(
+        "OPENROUTER_MODEL",
+        "meta-llama/llama-3.3-70b-instruct:free",
+    ).strip()
+
+    return _call_openai_compatible(
+        provider="openrouter",
+        endpoint="https://openrouter.ai/api/v1/chat/completions",
+        api_key=api_key,
+        model=model,
+        item=item,
+        extra_headers={
+            "HTTP-Referer": "https://www.cyberoplus.com/",
+            "X-Title": "Cybero Plus News Bot",
+        },
+    )
+
+
+def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Compatibility entry point used by the batch processor.
+
+    Tries each configured AI provider in order. Missing keys are skipped.
+    If a provider is rate-limited or temporarily fails, the next one is tried.
+    Nothing is lost when all providers fail: the batch processor keeps the
+    Telegram item unprepared so a later workflow run can retry it.
+    """
+
+    providers = [
+        _call_gemini_provider,
+        _call_groq_provider,
+        _call_openrouter_provider,
+    ]
+
+    errors: list[str] = []
+    configured = 0
+
+    for provider in providers:
+        try:
+            if provider is _call_gemini_provider and os.environ.get("GEMINI_API_KEY", "").strip():
+                configured += 1
+            elif provider is _call_groq_provider and os.environ.get("GROQ_API_KEY", "").strip():
+                configured += 1
+            elif provider is _call_openrouter_provider and os.environ.get("OPENROUTER_API_KEY", "").strip():
+                configured += 1
+            else:
+                continue
+
+            return provider(item)
+        except Exception as exc:
+            errors.append(f"{provider.__name__}: {exc}")
+            print(
+                f"WARNING: AI provider failed, trying fallback: {provider.__name__}: {exc}",
+                file=sys.stderr,
+            )
+
+    if configured == 0:
+        raise RuntimeError("No AI provider API key is configured.")
+
+    raise RuntimeError(
+        "All configured AI providers failed: " + " | ".join(errors)
+    )
 
 
 def main() -> int:
