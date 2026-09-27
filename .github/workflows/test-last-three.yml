@@ -15,7 +15,7 @@ permissions:
 jobs:
   publish-three-tests:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 16
 
     steps:
       - name: Checkout repository
