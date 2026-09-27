@@ -46,11 +46,36 @@ def read_latest_item() -> dict[str, Any]:
     return max(messages, key=lambda item: item["telegram_id"])
 
 
+SOURCE_NOTE_RE = re.compile(
+    r"(?im)^\s*(?:source|via|credit|credits)\s*:\s*(.+?)\s*$"
+)
+
+
+def split_source_note(text: str) -> tuple[str, str]:
+    """Move plain-text attribution lines out of the Facebook body."""
+    if not text:
+        return "", ""
+    notes: list[str] = []
+
+    def take(match: re.Match[str]) -> str:
+        value = match.group(1).strip()
+        if value and value not in notes:
+            notes.append(value)
+        return ""
+
+    cleaned = SOURCE_NOTE_RE.sub(take, text)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned, " | ".join(notes)
+
+
 def normalize_item(item: dict[str, Any]) -> dict[str, Any]:
+    original_text = item.get("clean_text") or item.get("text") or item.get("raw_text") or ""
+    text, source_note = split_source_note(str(original_text))
     return {
         "telegram_id": item.get("telegram_id") or item.get("id"),
         "published_at": item.get("published_at"),
-        "text": item.get("clean_text") or item.get("text") or item.get("raw_text") or "",
+        "text": text,
+        "source_note": source_note,
         "source_links": item.get("source_links") or [],
         "has_image": bool(item.get("has_image")),
         "has_video": bool(item.get("has_video")),
@@ -122,7 +147,11 @@ def isolate_latin_runs_rtl(text: str) -> str:
     return protected
 
 
-def enforce_source_policy(result: dict[str, Any], allowed_links: list[str]) -> dict[str, Any]:
+def enforce_source_policy(
+    result: dict[str, Any],
+    allowed_links: list[str],
+    source_note: str = "",
+) -> dict[str, Any]:
     allowed = [str(url) for url in allowed_links if url]
     source_url = str(result.get("source_url") or "").strip()
 
@@ -130,7 +159,15 @@ def enforce_source_policy(result: dict[str, Any], allowed_links: list[str]) -> d
         source_url = ""
 
     result["source_url"] = source_url
-    result["first_comment"] = f"المصدر: {source_url}" if source_url else ""
+    note = str(source_note or "").strip()
+    if note and source_url:
+        result["first_comment"] = f"المصدر: {note}\n{source_url}"
+    elif note:
+        result["first_comment"] = f"المصدر: {note}"
+    elif source_url:
+        result["first_comment"] = f"المصدر: {source_url}"
+    else:
+        result["first_comment"] = ""
 
     forbidden_fragments = (
         "internationalcyberdigest.com",
@@ -160,6 +197,7 @@ def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
         "published_at": item["published_at"],
         "text": item["text"],
         "source_links": item["source_links"],
+        "source_note": item.get("source_note", ""),
         "media": {
             "has_image": item["has_image"],
             "has_video": item["has_video"],
@@ -206,7 +244,11 @@ def _call_gemini_provider(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         )
 
     generated = parse_json_response(extract_text(response.json()))
-    return f"gemini/{model}", enforce_source_policy(generated, item["source_links"])
+    return f"gemini/{model}", enforce_source_policy(
+        generated,
+        item["source_links"],
+        item.get("source_note", ""),
+    )
 
 
 def _call_openai_compatible(
@@ -254,7 +296,11 @@ def _call_openai_compatible(
         raise RuntimeError(f"{provider} returned an unexpected response.") from exc
 
     generated = parse_json_response(str(text))
-    return f"{provider}/{model}", enforce_source_policy(generated, item["source_links"])
+    return f"{provider}/{model}", enforce_source_policy(
+        generated,
+        item["source_links"],
+        item.get("source_note", ""),
+    )
 
 
 def _call_groq_provider(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
