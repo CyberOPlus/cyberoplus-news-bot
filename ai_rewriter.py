@@ -369,7 +369,7 @@ def enforce_source_policy(
 
     if note and source_url:
         label = labels.get(role, "المصدر")
-        result["first_comment"] = f"{label}: {note}\\n{source_url}"
+        result["first_comment"] = f"{label}: {note}\n{source_url}"
     elif note:
         label = labels.get(role, "المصدر")
         result["first_comment"] = f"{label}: {note}"
@@ -423,10 +423,10 @@ def enforce_source_policy(
         )
         body = str(result.get("facebook_post") or "").strip()
         if cue not in body:
-            result["facebook_post"] = (body + "\\n\\n" + cue).strip()
+            result["facebook_post"] = (body + "\n\n" + cue).strip()
 
     card_title = str(result.get("card_title") or "").strip()
-    card_title = re.sub(r"\\s+", " ", card_title)
+    card_title = re.sub(r"\s+", " ", card_title)
     result["card_title"] = isolate_latin_runs_rtl(card_title[:140])
     result["language"] = "ary"
     return result
