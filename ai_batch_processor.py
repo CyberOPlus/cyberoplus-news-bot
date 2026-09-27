@@ -183,6 +183,33 @@ def append_ready(row: dict[str, Any]) -> None:
 def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
     item = normalize_item(raw_item)
 
+    if not str(item.get("text") or "").strip():
+        return {
+            "telegram_id": int(item["telegram_id"]),
+            "telegram_ids": [
+                int(value)
+                for value in (raw_item.get("telegram_ids") or [item["telegram_id"]])
+            ],
+            "source_published_at": item.get("published_at"),
+            "prepared_at": now_iso(),
+            "status": "media_only",
+            "language": "ar",
+            "title": "",
+            "facebook_post": "",
+            "first_comment": "",
+            "source_url": "",
+            "media": {
+                "has_image": bool(raw_item.get("has_image")),
+                "image_url": raw_item.get("image_url"),
+                "image_urls": raw_item.get("image_urls") or (
+                    [raw_item.get("image_url")] if raw_item.get("image_url") else []
+                ),
+                "has_video": bool(raw_item.get("has_video")),
+                "has_document": bool(raw_item.get("has_document")),
+            },
+            "ai_model": "not_required",
+        }
+
     last_error: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
