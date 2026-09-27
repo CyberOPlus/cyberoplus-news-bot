@@ -1,5 +1,5 @@
 requests>=2.32,<3
-beautifulsoup4>=4.12,<5
+beautifulsoup4>=4.15.0,<5
 Pillow>=11,<13
 arabic-reshaper>=3,<4
 python-bidi>=0.6,<1
