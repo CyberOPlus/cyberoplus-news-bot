@@ -58,6 +58,8 @@ def validate_entity_policy() -> None:
         raise RuntimeError("Generic short acronym phrase AI agents became immutable.")
     if _strict_entity_tokens("frontier AI lab"):
         raise RuntimeError("Generic phrase frontier AI lab became immutable.")
+    if _strict_entity_tokens("use-after-free"):
+        raise RuntimeError("Lowercase descriptive technical compound became immutable.")
 
     for value in ("OpenAI", "GitHub", "WebKit", "PS5"):
         if not _strict_entity_tokens(value):
