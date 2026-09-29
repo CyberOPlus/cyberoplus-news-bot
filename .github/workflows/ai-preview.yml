@@ -2,6 +2,11 @@ name: Preview latest Telegram post (NO FACEBOOK)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/validation-trigger.txt"
 
 permissions:
   contents: read
@@ -24,6 +29,11 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      - name: Validate code, MSA policy and fallback-card layout
+        run: |
+          python -m py_compile             telegram_collector.py             ai_rewriter.py             ai_batch_processor.py             image_resolver.py             facebook_publisher.py             merge_pipeline_state.py             validate_pipeline.py             preview_latest_post.py
+          python validate_pipeline.py
+
       - name: Ensure FFmpeg is available for video previews
         shell: bash
         run: |
@@ -40,6 +50,8 @@ jobs:
           GROQ_MODELS: qwen/qwen3.8-27b,openai/gpt-oss-120b,openai/gpt-oss-20b
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_MODELS: openrouter/free
+          AI_HTTP_TIMEOUT_SECONDS: 20
+          AI_HTTP_ATTEMPTS: 1
         run: python preview_latest_post.py
 
       - name: Show preview in GitHub summary
