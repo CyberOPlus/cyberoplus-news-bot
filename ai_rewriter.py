@@ -705,12 +705,16 @@ def enforce_source_policy(
         if str(value or "").strip()
     ][:12]
 
-    source_lower = source_text.lower()
+    # Protect entities from the editorial source text, not from URL slugs.
+    # A GitHub/project name that appears only inside a source URL is already
+    # preserved by source_url/first_comment and must not be forced into the
+    # Facebook body.
+    source_entity_text = _clean_source_text(source_text).lower()
     result["protected_entities"] = [
         str(value).strip()
         for value in (result.get("protected_entities") or [])
         if str(value or "").strip()
-        and str(value).strip().lower() in source_lower
+        and str(value).strip().lower() in source_entity_text
     ][:30]
     result["protected_numbers"] = sorted(_numeric_tokens(source_text))
 
