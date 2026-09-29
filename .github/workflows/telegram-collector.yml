@@ -2,17 +2,9 @@
 name: Telegram to Facebook publisher
 
 on:
+  # Maintenance mode: automatic triggers are intentionally disabled while the
+  # production pipeline is being repaired and validated.
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/public-keepalive.txt"
-  schedule:
-    # Stagger away from minute 0, where GitHub documents higher scheduler load.
-    # Every run drains the whole queue, so bursts of 5-6+ Telegram posts are
-    # published in the same workflow run instead of one post per hour.
-    - cron: "2-59/5 * * * *"
 
 permissions:
   contents: write
