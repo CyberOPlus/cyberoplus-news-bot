@@ -16,7 +16,7 @@ concurrency:
 jobs:
   collect-prepare-publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -54,6 +54,8 @@ jobs:
           if python - <<'PY'
           import json
           from pathlib import Path
+          from video_rights import evaluate_video_rights
+          from video_rights import evaluate_video_rights
 
           def rows(path):
               if not path.exists():
@@ -73,7 +75,12 @@ jobs:
               and int(row.get("telegram_id", 0) or 0) > 0
               and int(row.get("telegram_id", 0) or 0) not in published
           ]
-          raise SystemExit(0 if any((row.get("media") or {}).get("has_video") for row in pending) else 1)
+          needs_video = any(
+              (row.get("media") or {}).get("has_video")
+              and evaluate_video_rights(row).reupload_allowed
+              for row in pending
+          )
+          raise SystemExit(0 if needs_video else 1)
           PY
           then
             if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
@@ -169,7 +176,11 @@ jobs:
               if row.get("status") == "ready"
               and int(row.get("telegram_id", 0) or 0) not in published
           ]
-          needs_video = any((row.get("media") or {}).get("has_video") for row in pending)
+          needs_video = any(
+              (row.get("media") or {}).get("has_video")
+              and evaluate_video_rights(row).reupload_allowed
+              for row in pending
+          )
           raise SystemExit(0 if needs_video else 1)
           PY
           then
