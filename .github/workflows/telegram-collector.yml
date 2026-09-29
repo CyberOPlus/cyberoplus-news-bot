@@ -135,7 +135,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODELS: gemini-3.7-flash,gemini-3.5-flash
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GROQ_MODELS: qwen/qwen3.8-27b,openai/gpt-oss-120b,openai/gpt-oss-20b
+          GROQ_MODELS: openai/gpt-oss-120b,qwen/qwen3.8-27b,openai/gpt-oss-20b
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_MODELS: openrouter/free
           AI_HTTP_TIMEOUT_SECONDS: 20
