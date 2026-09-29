@@ -16,8 +16,13 @@ from bs4 import BeautifulSoup
 
 
 TIMEOUT = 35
-MAX_VIDEO_BYTES = int(os.environ.get("MAX_TELEGRAM_VIDEO_BYTES", str(350 * 1024 * 1024)))
-PROCESS_TIMEOUT = int(os.environ.get("VIDEO_PROCESS_TIMEOUT_SECONDS", "300"))
+# Telegram downloads are streamed to disk, never buffered in RAM. The higher
+# ceiling allows long, high-quality licensed videos while retaining a hard stop.
+MAX_VIDEO_BYTES = int(os.environ.get("MAX_TELEGRAM_VIDEO_BYTES", str(2 * 1024 * 1024 * 1024)))
+PROCESS_TIMEOUT_FLOOR = int(os.environ.get("VIDEO_PROCESS_TIMEOUT_FLOOR_SECONDS", "420"))
+PROCESS_TIMEOUT_CAP = int(os.environ.get("VIDEO_PROCESS_TIMEOUT_CAP_SECONDS", "3000"))
+VIDEO_CRF = int(os.environ.get("VIDEO_CRF", "18"))
+VIDEO_PRESET = os.environ.get("VIDEO_PRESET", "veryfast").strip() or "veryfast"
 BRAND_TEXT = "www.CyberoPlus.com"
 
 HEADERS = {
@@ -209,6 +214,31 @@ def probe_video(path: Path) -> dict[str, float | int | str]:
     }
 
 
+def probe_audio_codec(path: Path) -> str:
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        raise RuntimeError("ffprobe is not installed on this runner.")
+
+    result = _run(
+        [
+            ffprobe,
+            "-v", "error",
+            "-select_streams", "a:0",
+            "-show_entries", "stream=codec_name",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        timeout=45,
+    )
+    return (result.stdout or "").strip().lower()
+
+
+def _processing_timeout(duration: float) -> int:
+    """Scale CPU budget with video length while keeping a hard workflow-safe cap."""
+    calculated = int(max(0.0, duration) * 1.8 + 180)
+    return min(PROCESS_TIMEOUT_CAP, max(PROCESS_TIMEOUT_FLOOR, calculated))
+
+
 def _font_file() -> str:
     candidates = (
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -221,7 +251,14 @@ def _font_file() -> str:
     return ""
 
 
-def brand_video(input_path: Path, output_path: Path) -> VideoAsset:
+def brand_video(
+    input_path: Path,
+    output_path: Path,
+    *,
+    clip_start_seconds: float | None = None,
+    max_clip_seconds: float | None = None,
+) -> VideoAsset:
+    """Add the site watermark with one high-quality encode and no resizing/FPS change."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError("ffmpeg is not installed on this runner.")
@@ -229,8 +266,10 @@ def brand_video(input_path: Path, output_path: Path) -> VideoAsset:
     info = probe_video(input_path)
     width = int(info["width"])
     height = int(info["height"])
+    source_duration = float(info["duration"])
     font_size = max(22, min(48, round(min(width, height) / 28)))
     font_file = _font_file()
+    audio_codec = probe_audio_codec(input_path)
 
     drawtext = []
     if font_file:
@@ -248,35 +287,67 @@ def brand_video(input_path: Path, output_path: Path) -> VideoAsset:
         ]
     )
 
+    start = max(0.0, float(clip_start_seconds or 0.0))
+    available_duration = max(0.1, source_duration - start)
+    if max_clip_seconds is not None and float(max_clip_seconds) > 0:
+        effective_duration = min(available_duration, float(max_clip_seconds))
+    else:
+        effective_duration = available_duration
+
     command = [
         ffmpeg,
         "-y",
         "-hide_banner",
         "-loglevel", "error",
-        "-i", str(input_path),
-        "-map", "0:v:0",
-        "-map", "0:a?",
-        "-vf", "drawtext=" + ":".join(drawtext),
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "21",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "160k",
-        "-movflags", "+faststart",
-        "-map_metadata", "-1",
-        str(output_path),
     ]
+    if start > 0:
+        command.extend(["-ss", f"{start:.3f}"])
+    command.extend(
+        [
+            "-i", str(input_path),
+            "-map", "0:v:0",
+            "-map", "0:a?",
+        ]
+    )
+    if max_clip_seconds is not None and float(max_clip_seconds) > 0:
+        command.extend(["-t", f"{effective_duration:.3f}"])
+
+    command.extend(
+        [
+            "-vf", "drawtext=" + ":".join(drawtext),
+            "-c:v", "libx264",
+            "-preset", VIDEO_PRESET,
+            "-crf", str(VIDEO_CRF),
+            "-pix_fmt", "yuv420p",
+        ]
+    )
+
+    # Preserve AAC audio bit-for-bit when possible. Only transcode audio when
+    # the source codec is not MP4/Facebook-friendly.
+    if audio_codec == "aac":
+        command.extend(["-c:a", "copy"])
+    else:
+        command.extend(["-c:a", "aac", "-b:a", "192k"])
+
+    command.extend(
+        [
+            "-movflags", "+faststart",
+            "-map_metadata", "-1",
+            str(output_path),
+        ]
+    )
 
     try:
-        _run(command, timeout=PROCESS_TIMEOUT)
+        _run(command, timeout=_processing_timeout(effective_duration))
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or exc.stdout or "")[-1200:]
         output_path.unlink(missing_ok=True)
         raise RuntimeError(f"FFmpeg watermarking failed: {detail}") from exc
     except subprocess.TimeoutExpired as exc:
         output_path.unlink(missing_ok=True)
-        raise RuntimeError("FFmpeg watermarking timed out.") from exc
+        raise RuntimeError(
+            f"FFmpeg watermarking timed out for a {effective_duration:.0f}s video."
+        ) from exc
 
     if not output_path.exists() or output_path.stat().st_size < 32_000:
         raise RuntimeError("FFmpeg did not create a usable branded video.")
@@ -294,11 +365,13 @@ def brand_video(input_path: Path, output_path: Path) -> VideoAsset:
         branded=True,
     )
 
-
 def prepare_branded_video(
     known_urls: list[str],
     telegram_post_url: str,
     workdir: Path,
+    *,
+    clip_start_seconds: float | None = None,
+    max_clip_seconds: float | None = None,
 ) -> VideoAsset:
     candidates = resolve_telegram_video_urls(known_urls, telegram_post_url)
     if not candidates:
@@ -310,7 +383,12 @@ def prepare_branded_video(
         output_path = workdir / f"cyberoplus-video-{index}.mp4"
         try:
             download_video(url, input_path)
-            asset = brand_video(input_path, output_path)
+            asset = brand_video(
+                input_path,
+                output_path,
+                clip_start_seconds=clip_start_seconds,
+                max_clip_seconds=max_clip_seconds,
+            )
             asset.source_url = url
             return asset
         except Exception as exc:
