@@ -6,6 +6,11 @@ on:
     # Backup heartbeat. The production workflow itself polls every 5 minutes.
     # This watchdog only intervenes when no production run has started recently.
     - cron: "4,19,34,49 * * * *"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/watchdog-trigger.txt"
 
 permissions:
   actions: write
