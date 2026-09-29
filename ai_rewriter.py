@@ -47,8 +47,8 @@ DEFAULT_GROQ_MODELS = (
 )
 DEFAULT_OPENROUTER_MODELS = ("openrouter/free",)
 
-TIMEOUT_SECONDS = 60
-MAX_HTTP_ATTEMPTS = 2
+TIMEOUT_SECONDS = max(5, int(os.environ.get("AI_HTTP_TIMEOUT_SECONDS", "20")))
+MAX_HTTP_ATTEMPTS = max(1, int(os.environ.get("AI_HTTP_ATTEMPTS", "1")))
 TRANSIENT_HTTP_STATUS = {408, 409, 425, 429, 500, 502, 503, 504}
 
 URL_RE = re.compile(r"https?://[^\s<>()\[\]{}\"']+")
@@ -426,7 +426,22 @@ def _clean_source_text(text: str) -> str:
 
 def _numeric_tokens(text: str) -> set[str]:
     clean = URL_RE.sub("", str(text or ""))
-    return {match.group(0).strip() for match in NUMBER_RE.finditer(clean)}
+    tokens: set[str] = set()
+    for match in NUMBER_RE.finditer(clean):
+        value = match.group(0).strip()
+
+        # NUMBER_RE intentionally accepts punctuation used inside versions,
+        # dates and times. Do not let sentence punctuation become part of the
+        # fact token though: "13.60," and "13.60" are the same numeric fact.
+        if value.endswith("%"):
+            core = value[:-1].rstrip(".,:/-")
+            value = core + "%" if core else value
+        else:
+            value = value.rstrip(".,:/-")
+
+        if value:
+            tokens.add(value)
+    return tokens
 
 
 def _cve_tokens(text: str) -> set[str]:
