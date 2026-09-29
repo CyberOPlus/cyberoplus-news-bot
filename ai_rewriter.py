@@ -632,7 +632,7 @@ def enforce_source_policy(
     result["source_url"] = source_url
     result["link_role"] = role
     result["title"] = ""
-    result["language"] = "ary"
+    result["language"] = "ar"
 
     content_type = str(result.get("content_type") or "general").strip()
     result["content_type"] = content_type if content_type in CONTENT_TYPES else "general"
@@ -724,12 +724,12 @@ def enforce_source_policy(
     cue = ""
     if source_url or note:
         cue = {
-            "source": "المصدر فالتعليق الأول.",
-            "tool": "رابط الأداة فالتعليق الأول.",
-            "download": "رابط التحميل فالتعليق الأول.",
-            "project": "رابط المشروع فالتعليق الأول.",
-            "more_info": "الرابط فالتعليق الأول.",
-        }.get(result["link_role"], "المصدر فالتعليق الأول.")
+            "source": "المصدر في التعليق الأول.",
+            "tool": "رابط الأداة في التعليق الأول.",
+            "download": "رابط التحميل في التعليق الأول.",
+            "project": "رابط المشروع في التعليق الأول.",
+            "more_info": "الرابط في التعليق الأول.",
+        }.get(result["link_role"], "المصدر في التعليق الأول.")
 
     sections = [section for section in (attention_prefix, body, cue) if section]
     result["facebook_post"] = isolate_latin_runs_rtl("\n\n".join(sections))
@@ -770,7 +770,7 @@ def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
         },
     }
     user_text = (
-        "طبق التعليمات على هاد المنشور ورجع JSON صالح فقط.\n\n"
+        "طبّق التعليمات على هذا المنشور وأعد JSON صالحاً فقط.\n\n"
         + json.dumps(user_payload, ensure_ascii=False, indent=2)
     )
     return instructions, user_text
