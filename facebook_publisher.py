@@ -25,7 +25,7 @@ READY = ROOT / "data" / "ready.jsonl"
 EVENTS = ROOT / "data" / "facebook_events.jsonl"
 GRAPH_VERSION = os.environ.get("META_GRAPH_VERSION", "v26.0")
 GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_VERSION}"
-MIN_GAP = int(os.environ.get("FACEBOOK_MIN_GAP_MINUTES", "12"))
+MIN_GAP = int(os.environ.get("FACEBOOK_MIN_GAP_MINUTES", "0"))
 VIDEO_UPLOAD_TIMEOUT = int(os.environ.get("FACEBOOK_VIDEO_UPLOAD_TIMEOUT_SECONDS", "1800"))
 
 
@@ -231,6 +231,18 @@ def main() -> int:
             if row.get("status") == "ready"
             and int(row.get("telegram_id", 0)) not in posts
         ]
+
+        target_id_raw = os.environ.get("FACEBOOK_TARGET_TELEGRAM_ID", "").strip()
+        if target_id_raw:
+            try:
+                target_id = int(target_id_raw)
+            except ValueError as exc:
+                raise RuntimeError("FACEBOOK_TARGET_TELEGRAM_ID must be an integer") from exc
+            pending = [
+                row for row in pending
+                if int(row.get("telegram_id", 0) or 0) == target_id
+            ]
+
         if not pending:
             print('{"status":"queue_up_to_date"}')
             return 0
