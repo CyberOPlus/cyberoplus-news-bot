@@ -29,7 +29,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Validate code, MSA policy and fallback-card layout
+      - name: Validate code, MSA, rights policy and media safeguards
         run: |
           python -m py_compile             telegram_collector.py             ai_rewriter.py             ai_batch_processor.py             image_resolver.py             facebook_publisher.py             merge_pipeline_state.py             validate_pipeline.py             preview_latest_post.py             preview_specific_item.py
           python validate_pipeline.py
