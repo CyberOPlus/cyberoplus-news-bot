@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: telegram-facebook-pipeline
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   collect-prepare-publish:
