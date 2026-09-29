@@ -413,6 +413,24 @@ def isolate_latin_runs_rtl(text: str) -> str:
     return protected
 
 
+def force_rtl_paragraphs(text: str) -> str:
+    """Force every visible Facebook paragraph RTL while preserving Latin runs."""
+    if not text:
+        return ""
+    isolated = isolate_latin_runs_rtl(text)
+    lines: list[str] = []
+    for line in isolated.split("\n"):
+        value = line.strip()
+        if not value:
+            lines.append("")
+            continue
+        # RLI/PDI makes the whole paragraph Arabic-directional even when it
+        # starts with an English product/company name. Nested FSI/PDI keeps
+        # English/Latin terms readable left-to-right.
+        lines.append("\u2067" + value + "\u2069")
+    return "\n".join(lines)
+
+
 def _canonical_source_link(allowed_links: list[str]) -> str:
     """The model never gets to invent or rewrite the source URL."""
     for url in allowed_links:
@@ -472,6 +490,12 @@ def _validate_fact_fidelity(source_text: str, facebook_post: str) -> None:
             "AI introduced numeric facts not present in source: "
             + ", ".join(invented_numbers[:8])
         )
+    missing_numbers = sorted(source_numbers - output_numbers)
+    if missing_numbers:
+        raise RuntimeError(
+            "AI omitted numeric facts from source: "
+            + ", ".join(missing_numbers[:12])
+        )
 
     source_cves = _cve_tokens(source_text)
     output_cves = _cve_tokens(facebook_post)
@@ -490,7 +514,7 @@ def _validate_fact_fidelity(source_text: str, facebook_post: str) -> None:
 
     source_clean = _clean_source_text(source_text)
     output_clean = _clean_source_text(facebook_post)
-    if len(source_clean) >= 220 and len(output_clean) < max(90, int(len(source_clean) * 0.30)):
+    if len(source_clean) >= 220 and len(output_clean) < max(120, int(len(source_clean) * 0.50)):
         raise RuntimeError("AI output is too short and may have dropped source facts.")
     if len(source_clean) >= 100 and len(output_clean) > max(900, int(len(source_clean) * 2.5)):
         raise RuntimeError("AI output is unusually long and may contain added material.")
@@ -772,7 +796,7 @@ def enforce_source_policy(
         }.get(result["link_role"], "المصدر في التعليق الأول.")
 
     sections = [section for section in (attention_prefix, body, cue) if section]
-    result["facebook_post"] = isolate_latin_runs_rtl("\n\n".join(sections))
+    result["facebook_post"] = force_rtl_paragraphs("\n\n".join(sections))
 
     card_title = str(result.get("card_title") or "").strip()
     card_title = ATTENTION_PREFIX_RE.sub("", card_title, count=1).strip()
@@ -892,7 +916,7 @@ def _call_one_gemini(
         "contents": [{"role": "user", "parts": [{"text": user_text}]}],
         "generationConfig": {
             "temperature": 0.15,
-            "maxOutputTokens": 900,
+            "maxOutputTokens": 1600,
             "responseMimeType": "application/json",
             # Gemini currently rejects JSON Schema's additionalProperties key.
             # Keep it in OUTPUT_SCHEMA for local validation, but omit it here.
@@ -948,8 +972,8 @@ def _call_one_openai_compatible(
         ],
         # Keep free-tier Groq requests below the enforced output-token budget.
         # The schema is intentionally concise and does not need multi-thousand
-        # token generations for a short Facebook post.
-        "max_tokens": 900,
+        # token generations while preserving every source detail.
+        "max_tokens": 1600,
     }
 
     if strict_schema:
