@@ -31,7 +31,7 @@ jobs:
 
       - name: Validate code, MSA policy and fallback-card layout
         run: |
-          python -m py_compile             telegram_collector.py             ai_rewriter.py             ai_batch_processor.py             image_resolver.py             facebook_publisher.py             merge_pipeline_state.py             validate_pipeline.py             preview_latest_post.py
+          python -m py_compile             telegram_collector.py             ai_rewriter.py             ai_batch_processor.py             image_resolver.py             facebook_publisher.py             merge_pipeline_state.py             validate_pipeline.py             preview_latest_post.py             preview_specific_item.py
           python validate_pipeline.py
 
       - name: Ensure FFmpeg is available for video previews
@@ -41,6 +41,18 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends ffmpeg
           fi
+
+      - name: Validate known 13.60 regression item through AI
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODELS: gemini-3.7-flash,gemini-3.5-flash
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GROQ_MODELS: qwen/qwen3.8-27b,openai/gpt-oss-120b,openai/gpt-oss-20b
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER_MODELS: openrouter/free
+          AI_HTTP_TIMEOUT_SECONDS: 20
+          AI_HTTP_ATTEMPTS: 1
+        run: python preview_specific_item.py 1693
 
       - name: Generate one complete dry-run preview
         env:
