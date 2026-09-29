@@ -236,21 +236,60 @@ jobs:
 
           echo "Published $published_this_run queued item(s) in this run."
 
-      - name: Persist pipeline state
+      - name: Persist pipeline state without rebase conflicts
         if: always() && steps.probe.outputs.needs_run == 'true'
         shell: bash
         run: |
-          if git diff --quiet -- data/state.json data/inbox.jsonl data/ai_state.json data/ready.jsonl data/facebook_events.jsonl; then
+          set -euo pipefail
+
+          files=(
+            data/state.json
+            data/inbox.jsonl
+            data/ai_state.json
+            data/ready.jsonl
+            data/facebook_events.jsonl
+          )
+
+          if git diff --quiet -- "${files[@]}"; then
             echo "No pipeline changes to persist."
             exit 0
           fi
 
+          snapshot="$(mktemp -d)"
+          for file in "${files[@]}"; do
+            mkdir -p "$snapshot/$(dirname "$file")"
+            cp "$file" "$snapshot/$file"
+          done
+
           git config user.name "cyberoplus-news-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add data/state.json data/inbox.jsonl data/ai_state.json data/ready.jsonl data/facebook_events.jsonl
-          git commit -m "Persist Facebook publishing pipeline state"
-          git pull --rebase origin main
-          git push
+
+          for attempt in 1 2 3; do
+            echo "State persistence attempt $attempt/3"
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Merge this run's snapshot into the newest remote state instead of
+            # rebasing append-only JSONL files and risking content conflicts.
+            python merge_pipeline_state.py "$snapshot/data"
+
+            git add "${files[@]}"
+            if git diff --cached --quiet; then
+              echo "Latest main already contains this run's state."
+              exit 0
+            fi
+
+            git commit -m "Persist Facebook publishing pipeline state"
+            if git push origin HEAD:main; then
+              echo "Pipeline state persisted safely."
+              exit 0
+            fi
+
+            echo "Remote changed during push; merging again against latest main."
+          done
+
+          echo "Unable to persist pipeline state after 3 merge attempts." >&2
+          exit 1
 
       - name: Pipeline budget summary
         if: always()
