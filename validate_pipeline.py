@@ -7,7 +7,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from ai_rewriter import _validate_fact_fidelity
+from ai_rewriter import _preserve_ai_facebook_layout, _unwrap_latin_parentheses, _validate_fact_fidelity
 from image_resolver import build_branded_fallback_asset
 from merge_pipeline_state import merge_ai_state, merge_rows, merge_state, tid_key
 
@@ -44,6 +44,21 @@ def validate_numeric_fidelity() -> None:
     source = "Firmware versions are supported from 7.00 to 13.60, according to the source."
     output = "يدعم الإصدار النطاق من 7.00 إلى 13.60 وفقاً للمصدر."
     _validate_fact_fidelity(source, output)
+
+
+
+def validate_ai_layout_policy() -> None:
+    source = "فقرة أولى واضحة.\n\nفقرة ثانية.\n- نقطة أولى\n- نقطة ثانية"
+    cleaned = _preserve_ai_facebook_layout(source)
+    if cleaned != source:
+        raise RuntimeError("AI-selected paragraph/list layout was rebuilt unexpectedly.")
+
+    parenthetical = "أطلقت Microsoft ميزة Copilot (Preview) لدعم وظائف (AI)."
+    unwrapped = _unwrap_latin_parentheses(parenthetical)
+    if "(Preview)" in unwrapped or "(AI)" in unwrapped:
+        raise RuntimeError("Latin-only parenthetical terms remain in visible copy.")
+    if "Copilot Preview" not in unwrapped or "AI" not in unwrapped:
+        raise RuntimeError("Parenthetical cleanup removed the foreign term itself.")
 
 
 def validate_merge_logic() -> None:
@@ -112,6 +127,7 @@ def validate_fallback_cards() -> list[dict]:
 def main() -> int:
     validate_msa_prompt()
     validate_numeric_fidelity()
+    validate_ai_layout_policy()
     validate_merge_logic()
     cards = validate_fallback_cards()
 
@@ -120,6 +136,7 @@ def main() -> int:
         "facebook_called": False,
         "msa_prompt": "ok",
         "numeric_fidelity_regression": "ok",
+        "ai_layout_policy": "ok",
         "state_merge_logic": "ok",
         "fallback_cards": cards,
     }
