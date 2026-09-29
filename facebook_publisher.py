@@ -17,6 +17,7 @@ from image_resolver import (
     telegram_image_candidates,
 )
 from video_processor import prepare_branded_video
+from video_rights import evaluate_video_rights
 
 
 ROOT = Path(__file__).resolve().parent
@@ -25,6 +26,7 @@ EVENTS = ROOT / "data" / "facebook_events.jsonl"
 GRAPH_VERSION = os.environ.get("META_GRAPH_VERSION", "v26.0")
 GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_VERSION}"
 MIN_GAP = int(os.environ.get("FACEBOOK_MIN_GAP_MINUTES", "12"))
+VIDEO_UPLOAD_TIMEOUT = int(os.environ.get("FACEBOOK_VIDEO_UPLOAD_TIMEOUT_SECONDS", "1800"))
 
 
 def now() -> datetime:
@@ -166,7 +168,7 @@ def publish_video_file(page_id: str, token: str, message: str, video_asset) -> s
             f"{GRAPH_BASE}/{page_id}/videos",
             data=data,
             files={"source": (video_asset.filename, handle, video_asset.mime)},
-            timeout=(30, 360),
+            timeout=(30, VIDEO_UPLOAD_TIMEOUT),
         )
 
     payload = response.json()
@@ -250,11 +252,16 @@ def main() -> int:
         diagnostics: dict = {
             "declared_media_type": media.get("media_type") or "unknown",
             "video_attempted": False,
+            "video_skipped_by_rights": False,
             "image_attempted": False,
             "generated_fallback_used": False,
         }
 
-        if media.get("has_video"):
+        rights = evaluate_video_rights(item) if media.get("has_video") else None
+        if rights is not None:
+            diagnostics["video_rights"] = rights.to_dict()
+
+        if media.get("has_video") and rights is not None and rights.reupload_allowed:
             diagnostics["video_attempted"] = True
             video_urls = _unique(
                 list(media.get("video_urls") or [])
@@ -262,7 +269,13 @@ def main() -> int:
             )
             try:
                 with tempfile.TemporaryDirectory(prefix=f"cyberoplus-{tid}-") as temp_dir:
-                    video_asset = prepare_branded_video(video_urls, telegram_post_url, Path(temp_dir))
+                    video_asset = prepare_branded_video(
+                        video_urls,
+                        telegram_post_url,
+                        Path(temp_dir),
+                        clip_start_seconds=rights.clip_start_seconds,
+                        max_clip_seconds=rights.max_clip_seconds,
+                    )
                     diagnostics["video"] = {
                         "width": video_asset.width,
                         "height": video_asset.height,
@@ -291,12 +304,27 @@ def main() -> int:
             except Exception as exc:
                 media_errors.append(f"video: {exc}")
                 print(f"WARNING video fallback: {exc}", file=sys.stderr)
+        elif media.get("has_video"):
+            diagnostics["video_skipped_by_rights"] = True
+            print(
+                "INFO video re-upload skipped by rights gate: "
+                + json.dumps(diagnostics.get("video_rights") or {}, ensure_ascii=False),
+                file=sys.stderr,
+            )
 
         diagnostics["image_attempted"] = True
+        # When video re-upload is denied, do not silently republish a frame/poster
+        # extracted from that same unverified video. Prefer a separate attached
+        # image, the external source's hero image, or the owned fallback template.
+        video_thumbnails = (
+            list(media.get("video_thumbnail_urls") or [])
+            if not media.get("has_video") or (rights is not None and rights.reupload_allowed)
+            else []
+        )
         stored_image_urls = _unique(
             list(media.get("image_urls") or [])
             + ([media.get("image_url")] if media.get("image_url") else [])
-            + list(media.get("video_thumbnail_urls") or [])
+            + video_thumbnails
         )
         fresh_image_urls = telegram_image_candidates(telegram_post_url)
         telegram_image_urls = _unique(fresh_image_urls + stored_image_urls)
