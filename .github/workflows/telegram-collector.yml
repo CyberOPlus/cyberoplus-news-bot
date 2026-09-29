@@ -55,7 +55,6 @@ jobs:
           import json
           from pathlib import Path
           from video_rights import evaluate_video_rights
-          from video_rights import evaluate_video_rights
 
           def rows(path):
               if not path.exists():
@@ -157,6 +156,7 @@ jobs:
           if python - <<'PY'
           import json
           from pathlib import Path
+          from video_rights import evaluate_video_rights
 
           def rows(path):
               if not path.exists():
