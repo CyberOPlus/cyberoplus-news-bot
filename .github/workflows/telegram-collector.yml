@@ -55,6 +55,88 @@ jobs:
         if: steps.probe.outputs.needs_run == 'true'
         run: python telegram_collector.py
 
+      - name: Install FFmpeg for any already-ready video
+        if: steps.probe.outputs.needs_run == 'true'
+        shell: bash
+        run: |
+          if python - <<'PY'
+          import json
+          from pathlib import Path
+
+          def rows(path):
+              if not path.exists():
+                  return []
+              return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+          ready = rows(Path("data/ready.jsonl"))
+          events = rows(Path("data/facebook_events.jsonl"))
+          published = {
+              int(row.get("telegram_id", 0) or 0)
+              for row in events
+              if row.get("event") == "published"
+          }
+          pending = [
+              row for row in ready
+              if row.get("status") == "ready"
+              and int(row.get("telegram_id", 0) or 0) > 0
+              and int(row.get("telegram_id", 0) or 0) not in published
+          ]
+          raise SystemExit(0 if any((row.get("media") or {}).get("has_video") for row in pending) else 1)
+          PY
+          then
+            if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+              sudo apt-get update -qq
+              sudo apt-get install -y --no-install-recommends ffmpeg
+            fi
+          else
+            echo "No already-ready video requires FFmpeg."
+          fi
+
+      - name: Drain already-ready Facebook backlog before AI
+        if: steps.probe.outputs.needs_run == 'true'
+        env:
+          FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
+          FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
+          META_GRAPH_VERSION: v26.0
+          FACEBOOK_MIN_GAP_MINUTES: 0
+        shell: bash
+        run: |
+          set -euo pipefail
+          published_this_run=0
+          while python - <<'PY'
+          import json
+          from pathlib import Path
+
+          def rows(path):
+              if not path.exists():
+                  return []
+              return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+          ready = rows(Path("data/ready.jsonl"))
+          events = rows(Path("data/facebook_events.jsonl"))
+          published = {
+              int(row.get("telegram_id", 0) or 0)
+              for row in events
+              if row.get("event") == "published"
+          }
+          pending = [
+              row for row in ready
+              if row.get("status") == "ready"
+              and int(row.get("telegram_id", 0) or 0) > 0
+              and int(row.get("telegram_id", 0) or 0) not in published
+          ]
+          raise SystemExit(0 if pending else 1)
+          PY
+          do
+            python facebook_publisher.py
+            published_this_run=$((published_this_run + 1))
+            if [ "$published_this_run" -ge 100 ]; then
+              echo "Safety stop: 100 Facebook posts processed before AI." >&2
+              exit 1
+            fi
+          done
+          echo "Published $published_this_run already-ready item(s) before AI."
+
       - name: Prepare every unprocessed item in Arabic
         if: steps.probe.outputs.needs_run == 'true'
         env:
@@ -64,6 +146,9 @@ jobs:
           GROQ_MODELS: qwen/qwen3.8-27b,openai/gpt-oss-120b,openai/gpt-oss-20b
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_MODELS: openrouter/free
+          AI_HTTP_TIMEOUT_SECONDS: 20
+          AI_HTTP_ATTEMPTS: 1
+          AI_ITEM_ATTEMPTS: 1
         run: python ai_batch_processor.py
 
       - name: Install FFmpeg only when the next post needs video
