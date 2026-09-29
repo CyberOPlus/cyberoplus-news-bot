@@ -210,9 +210,9 @@ def write_summary(
         f"- \`{row['file']}\` — {row.get('origin','')} "
         f"{row.get('width','')}x{row.get('height','')}"
         for row in media_files
-    ) or "- ما كاين حتى ملف ميديا صالح."
+    ) or "- لا يوجد ملف وسائط صالح."
 
-    error_lines = "\n".join(f"- {html.escape(value)}" for value in errors) or "- ما كاين حتى خطأ."
+    error_lines = "\n".join(f"- {html.escape(value)}" for value in errors) or "- لا توجد أخطاء."
 
     summary = f"""# Cybero Plus — Preview فقط، بلا Facebook
 
@@ -234,7 +234,7 @@ def write_summary(
 ## ملاحظات/Fallback
 {error_lines}
 
-> باش تشوف الصورة أو الفيديو نفسه: هبط Artifact باسم **cyberoplus-post-preview** من أسفل صفحة الـRun.
+> لمعاينة الصورة أو الفيديو نفسه: افتح Artifact باسم **cyberoplus-post-preview** من أسفل صفحة التشغيل.
 """
     (OUT / "summary.md").write_text(summary, encoding="utf-8")
 
