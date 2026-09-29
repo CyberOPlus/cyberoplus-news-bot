@@ -5,8 +5,8 @@ The public entry points are intentionally kept stable because ai_batch_processor
 imports normalize_item() and call_gemini().
 
 Provider order:
-1) Gemini free-tier models
-2) Groq free-plan models
+1) Groq free-plan models (fast path)
+2) Gemini free-tier models
 3) OpenRouter free router
 
 The first successful, valid structured result wins. Temporary rate limits and
@@ -895,21 +895,9 @@ def _provider_attempts(item: dict[str, Any]):
     groq_key = os.environ.get("GROQ_API_KEY", "").strip()
     openrouter_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
 
-    if gemini_key:
-        for model in _model_list(
-            "GEMINI_MODELS",
-            "GEMINI_MODEL",
-            DEFAULT_GEMINI_MODELS,
-        ):
-            yield (
-                f"gemini/{model}",
-                lambda model=model: _call_one_gemini(
-                    item,
-                    gemini_key,
-                    model,
-                ),
-            )
-
+    # Prefer Groq first. In production logs it has consistently returned in
+    # seconds, while transient Gemini 503/timeouts can otherwise hold the whole
+    # queue. Fidelity validation still applies identically to every provider.
     if groq_key:
         for model in _model_list(
             "GROQ_MODELS",
@@ -930,7 +918,22 @@ def _provider_attempts(item: dict[str, Any]):
                 ),
             )
 
-    # Keep lighter Gemini models as later fallbacks, after stronger Groq models.
+    if gemini_key:
+        for model in _model_list(
+            "GEMINI_MODELS",
+            "GEMINI_MODEL",
+            DEFAULT_GEMINI_MODELS,
+        ):
+            yield (
+                f"gemini/{model}",
+                lambda model=model: _call_one_gemini(
+                    item,
+                    gemini_key,
+                    model,
+                ),
+            )
+
+    # Keep lighter Gemini models as later fallbacks.
     if gemini_key:
         for model in ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite"):
             yield (
@@ -963,7 +966,6 @@ def _provider_attempts(item: dict[str, Any]):
                     strict_schema=False,
                 ),
             )
-
 
 def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Compatibility entry point: run the full resilient AI fallback chain."""
