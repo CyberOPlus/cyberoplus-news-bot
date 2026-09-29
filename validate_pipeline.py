@@ -45,6 +45,24 @@ def validate_numeric_fidelity() -> None:
     output = "يدعم الإصدار النطاق من 7.00 إلى 13.60 وفقاً للمصدر."
     _validate_fact_fidelity(source, output)
 
+    # A product identifier may legitimately be expanded while preserving its
+    # embedded generation number: PS5 -> PlayStation 5.
+    _validate_fact_fidelity(
+        "The update works on PS5 firmware 13.60.",
+        "يعمل التحديث على PlayStation 5 بإصدار 13.60.",
+    )
+
+
+def validate_entity_policy() -> None:
+    if _strict_entity_tokens("AI agents"):
+        raise RuntimeError("Generic short acronym phrase AI agents became immutable.")
+    if _strict_entity_tokens("frontier AI lab"):
+        raise RuntimeError("Generic phrase frontier AI lab became immutable.")
+
+    for value in ("OpenAI", "GitHub", "WebKit", "PS5"):
+        if not _strict_entity_tokens(value):
+            raise RuntimeError(f"Real technical entity is not protected: {value}")
+
 
 
 def validate_ai_layout_policy() -> None:
