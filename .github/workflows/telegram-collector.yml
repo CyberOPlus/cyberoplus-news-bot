@@ -4,8 +4,10 @@ name: Telegram to Facebook publisher
 on:
   workflow_dispatch:
   schedule:
-    # 24 runs/day instead of 288. Minute 47 avoids the busiest top-of-hour window.
-    - cron: "47 * * * *"
+    # Near-real-time polling within GitHub Actions' supported schedule cadence.
+    # Every run drains the whole queue, so bursts of 5-6+ Telegram posts are
+    # published in the same workflow run instead of one post per hour.
+    - cron: "*/5 * * * *"
 
 permissions:
   contents: write
@@ -17,7 +19,7 @@ concurrency:
 jobs:
   collect-prepare-publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 12
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -85,7 +87,7 @@ jobs:
               if row.get("status") == "ready"
               and int(row.get("telegram_id", 0) or 0) not in published
           ]
-          needs_video = bool(pending and (pending[0].get("media") or {}).get("has_video"))
+          needs_video = any((row.get("media") or {}).get("has_video") for row in pending)
           raise SystemExit(0 if needs_video else 1)
           PY
           then
@@ -98,14 +100,59 @@ jobs:
             echo "The next pending post does not need FFmpeg."
           fi
 
-      - name: Publish next ready item to Facebook
+      - name: Publish every ready item to Facebook immediately
         if: steps.probe.outputs.needs_run == 'true'
         env:
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
           META_GRAPH_VERSION: v26.0
-          FACEBOOK_MIN_GAP_MINUTES: 12
-        run: python facebook_publisher.py
+          FACEBOOK_MIN_GAP_MINUTES: 0
+        shell: bash
+        run: |
+          set -euo pipefail
+          published_this_run=0
+
+          while python - <<'PY'
+          import json
+          from pathlib import Path
+
+          def rows(path):
+              if not path.exists():
+                  return []
+              return [
+                  json.loads(line)
+                  for line in path.read_text(encoding="utf-8").splitlines()
+                  if line.strip()
+              ]
+
+          ready = rows(Path("data/ready.jsonl"))
+          events = rows(Path("data/facebook_events.jsonl"))
+          published = {
+              int(row.get("telegram_id", 0) or 0)
+              for row in events
+              if row.get("event") == "published"
+          }
+          pending = [
+              row
+              for row in ready
+              if row.get("status") == "ready"
+              and int(row.get("telegram_id", 0) or 0) > 0
+              and int(row.get("telegram_id", 0) or 0) not in published
+          ]
+          raise SystemExit(0 if pending else 1)
+          PY
+          do
+            python facebook_publisher.py
+            published_this_run=$((published_this_run + 1))
+
+            # Safety guard against a corrupted queue causing an endless loop.
+            if [ "$published_this_run" -ge 100 ]; then
+              echo "Safety stop: 100 Facebook posts processed in one workflow run." >&2
+              exit 1
+            fi
+          done
+
+          echo "Published $published_this_run queued item(s) in this run."
 
       - name: Persist pipeline state
         if: always() && steps.probe.outputs.needs_run == 'true'
@@ -129,4 +176,5 @@ jobs:
           echo "### Cybero Plus pipeline" >> "$GITHUB_STEP_SUMMARY"
           echo "- Preflight: \`${{ steps.probe.outputs.reason }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Full pipeline ran: \`${{ steps.probe.outputs.needs_run }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Schedule: once per hour at minute 47 UTC" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Schedule: every 5 minutes (GitHub Actions)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Queue policy: publish every ready item immediately; no intentional Facebook gap" >> "$GITHUB_STEP_SUMMARY"
