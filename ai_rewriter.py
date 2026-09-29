@@ -524,14 +524,19 @@ def _strict_entity_tokens(entity: str) -> list[str]:
             and any(ch.isupper() for ch in letters[1:])
         )
         all_upper_identifier = len(letters) >= 3 and letters.isupper()
-        has_technical_symbol = any(ch in "._+/#:&-" for ch in token)
+        # Lowercase descriptive technical compounds such as use-after-free
+        # may be translated into Arabic. Symbols alone do not make them names.
+        has_name_symbol = (
+            any(ch in "._+/#:&-" for ch in token)
+            and (has_digit or has_internal_upper or all_upper_identifier)
+        )
         single_title_name = len(tokens) == 1 and title_word(token) and len(token) >= 4
 
         if (
             has_digit
             or has_internal_upper
             or all_upper_identifier
-            or has_technical_symbol
+            or has_name_symbol
             or single_title_name
             or all_title_phrase
         ):
