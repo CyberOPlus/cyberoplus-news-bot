@@ -516,7 +516,13 @@ def _strict_entity_tokens(entity: str) -> list[str]:
     for token in tokens:
         letters = "".join(ch for ch in token if ch.isalpha())
         has_digit = any(ch.isdigit() for ch in token)
-        has_internal_upper = any(ch.isupper() for ch in letters[1:])
+        # Mixed-case names such as OpenAI/WebKit are immutable, but short
+        # generic acronyms such as AI may be translated naturally into Arabic.
+        has_internal_upper = (
+            len(letters) >= 2
+            and not letters.isupper()
+            and any(ch.isupper() for ch in letters[1:])
+        )
         all_upper_identifier = len(letters) >= 3 and letters.isupper()
         has_technical_symbol = any(ch in "._+/#:&-" for ch in token)
         single_title_name = len(tokens) == 1 and title_word(token) and len(token) >= 4
