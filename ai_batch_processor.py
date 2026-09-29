@@ -27,7 +27,7 @@ INBOX_PATH = ROOT / "data" / "inbox.jsonl"
 READY_PATH = ROOT / "data" / "ready.jsonl"
 AI_STATE_PATH = ROOT / "data" / "ai_state.json"
 
-MAX_RETRIES = 3
+MAX_RETRIES = max(1, int(os.environ.get("AI_ITEM_ATTEMPTS", "1")))
 
 
 def now_iso() -> str:
