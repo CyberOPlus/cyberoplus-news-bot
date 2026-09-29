@@ -889,6 +889,18 @@ def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
         "طبّق التعليمات على هذا المنشور وأعد JSON صالحاً فقط.\n\n"
         + json.dumps(user_payload, ensure_ascii=False, indent=2)
     )
+
+    fidelity_retry_hint = str(item.get("_fidelity_retry_hint") or "").strip()
+    if fidelity_retry_hint:
+        user_text += (
+            "\n\nإعادة تصحيح إلزامية: المحاولة السابقة رُفضت لأنها أسقطت "
+            "معلومة من المصدر. أعد كتابة facebook_post كاملاً من جديد، ولا تكتفِ "
+            "بإضافة الكلمة أو الرقم في النهاية. تأكد أن كل الأسماء والأرقام "
+            "والتفاصيل والشروط والأسباب والنتائج الواردة في النص موجودة في "
+            "سياقها الصحيح. سبب الرفض السابق: "
+            + fidelity_retry_hint
+        )
+
     return instructions, user_text
 
 def _finalize(
@@ -1094,6 +1106,13 @@ def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
 
     errors: list[str] = []
 
+    fidelity_markers = (
+        "AI changed or omitted protected entities",
+        "AI omitted numeric facts from source",
+        "AI omitted CVE identifiers from source",
+        "AI output is too short and may have dropped source facts",
+    )
+
     for label, call in attempts:
         try:
             model, result = call()
@@ -1108,9 +1127,35 @@ def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             )
             return model, result
         except Exception as exc:
-            errors.append(f"{label}: {exc}")
+            first_error = str(exc)
+
+            # A model that produced valid JSON but dropped a source fact gets one
+            # immediate repair pass with the exact deterministic rejection reason.
+            # This avoids waiting for the next 5-minute cycle and keeps fidelity
+            # guards strict instead of weakening them.
+            if any(marker in first_error for marker in fidelity_markers):
+                item["_fidelity_retry_hint"] = first_error
+                try:
+                    model, result = call()
+                    print(
+                        json.dumps(
+                            {
+                                "ai_provider_selected": model,
+                                "fidelity_repair": True,
+                                "fallback_failures_before_success": len(errors),
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                    return model, result
+                except Exception as repair_exc:
+                    first_error += f" | repair: {repair_exc}"
+                finally:
+                    item.pop("_fidelity_retry_hint", None)
+
+            errors.append(f"{label}: {first_error}")
             print(
-                f"WARNING: AI attempt failed, trying next model: {label}: {exc}",
+                f"WARNING: AI attempt failed, trying next model: {label}: {first_error}",
                 file=sys.stderr,
             )
 
