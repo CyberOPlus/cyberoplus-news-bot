@@ -150,7 +150,8 @@ def render_media(raw: dict[str, Any], result: dict[str, Any]) -> tuple[str, list
     fresh_images = telegram_image_candidates(post_url)
     image_urls = unique(fresh_images + stored_images)
 
-    assets, diagnostics = resolve_post_images(image_urls, "", max_images=10)
+    source_url = str(result.get("source_url") or "").strip()
+    assets, diagnostics = resolve_post_images(image_urls, source_url, max_images=10)
     if assets:
         for index, asset in enumerate(assets, start=1):
             artifacts.append(save_image_asset(asset, f"preview-image-{index:02d}.jpg"))
