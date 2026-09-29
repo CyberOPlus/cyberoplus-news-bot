@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "default_status": "unknown",
+  "policy": {
+    "mode": "strict",
+    "note": "Public availability is not permission to re-upload. Only explicit owned/licensed/reuse_allowed rules with reupload_allowed=true may publish video bytes to Facebook."
+  },
+  "channel_policies": {},
+  "post_overrides": {}
+}
