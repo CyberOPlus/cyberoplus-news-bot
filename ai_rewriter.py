@@ -482,8 +482,46 @@ def _validate_fact_fidelity(source_text: str, facebook_post: str) -> None:
         raise RuntimeError("AI output is unusually long and may contain added material.")
 
 
+def _strict_entity_tokens(entity: str) -> list[str]:
+    """Return only Latin tokens that should remain verbatim after Arabic editing."""
+    tokens = re.findall(r"[A-Za-z][A-Za-z0-9._+/#:&()'’\\-]*", str(entity or ""))
+    if not tokens:
+        return []
+
+    def title_word(token: str) -> bool:
+        letters = "".join(ch for ch in token if ch.isalpha())
+        return (
+            len(letters) >= 2
+            and letters[0].isupper()
+            and letters[1:].islower()
+        )
+
+    all_title_phrase = len(tokens) >= 2 and all(title_word(token) for token in tokens)
+    strict: list[str] = []
+
+    for token in tokens:
+        letters = "".join(ch for ch in token if ch.isalpha())
+        has_digit = any(ch.isdigit() for ch in token)
+        has_internal_upper = any(ch.isupper() for ch in letters[1:])
+        all_upper_identifier = len(letters) >= 3 and letters.isupper()
+        has_technical_symbol = any(ch in "._+/#:&-" for ch in token)
+        single_title_name = len(tokens) == 1 and title_word(token) and len(token) >= 4
+
+        if (
+            has_digit
+            or has_internal_upper
+            or all_upper_identifier
+            or has_technical_symbol
+            or single_title_name
+            or all_title_phrase
+        ):
+            strict.append(token)
+
+    return strict
+
+
 def _validate_protected_entities(entities: list[str], facebook_post: str) -> None:
-    """Reject model output that damages a protected Latin/digit entity."""
+    """Protect real names/identifiers without rejecting valid Arabic translation."""
     clean_post = (
         str(facebook_post or "")
         .replace("\u2066", "")
@@ -493,13 +531,21 @@ def _validate_protected_entities(entities: list[str], facebook_post: str) -> Non
         .replace("\u200e", "")
         .replace("\u200f", "")
     )
+    post_lower = clean_post.lower()
     missing: list[str] = []
+
     for raw in entities:
         entity = str(raw or "").strip()
-        if len(entity) < 3 or not re.search(r"[A-Za-z0-9]", entity):
+        strict_tokens = _strict_entity_tokens(entity)
+        if not strict_tokens:
+            # Generic phrases such as "AI agents" or "Dutch police" may be
+            # translated naturally into Arabic and are not immutable names.
             continue
-        if entity not in clean_post:
+
+        absent = [token for token in strict_tokens if token.lower() not in post_lower]
+        if absent:
             missing.append(entity)
+
     if missing:
         raise RuntimeError(
             "AI changed or omitted protected entities: "
@@ -801,7 +847,7 @@ def _call_one_gemini(
         "contents": [{"role": "user", "parts": [{"text": user_text}]}],
         "generationConfig": {
             "temperature": 0.15,
-            "maxOutputTokens": 2048,
+            "maxOutputTokens": 900,
             "responseMimeType": "application/json",
             # Gemini currently rejects JSON Schema's additionalProperties key.
             # Keep it in OUTPUT_SCHEMA for local validation, but omit it here.
@@ -855,6 +901,10 @@ def _call_one_openai_compatible(
             {"role": "system", "content": instructions},
             {"role": "user", "content": user_text},
         ],
+        # Keep free-tier Groq requests below the enforced output-token budget.
+        # The schema is intentionally concise and does not need multi-thousand
+        # token generations for a short Facebook post.
+        "max_tokens": 900,
     }
 
     if strict_schema:
