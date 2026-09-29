@@ -842,17 +842,29 @@ def _link_hints(urls: list[str]) -> list[dict[str, str]]:
 
 def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
     instructions = PROMPT_PATH.read_text(encoding="utf-8")
+
+    # URLs are metadata, not editorial facts. Remove them from every text block
+    # shown to the model so usernames/project slugs cannot be promoted into
+    # unsupported claims. The canonical links remain outside the AI boundary.
+    editorial_text = URL_RE.sub("", str(item.get("text") or "")).strip()
+    reply_context = []
+    for row in item.get("reply_context") or []:
+        clean = dict(row)
+        clean["text"] = URL_RE.sub("", str(clean.get("text") or "")).strip()
+        clean.pop("source_links", None)
+        reply_context.append(clean)
+
     user_payload = {
         "telegram_id": item["telegram_id"],
         "published_at": item["published_at"],
-        "text": item["text"],
+        "text": editorial_text,
         # Do not expose URL paths/slugs to the model. They can contain project,
         # usernames or filenames that are useful as links but are not facts in
         # the Telegram prose. The code restores the canonical URL later.
         "link_hints": _link_hints(item["source_links"]),
         "source_note": item.get("source_note", ""),
         "has_explicit_title": bool(item.get("has_explicit_title")),
-        "reply_context": item.get("reply_context") or [],
+        "reply_context": reply_context,
         "media": {
             "has_image": item["has_image"],
             "has_video": item["has_video"],
