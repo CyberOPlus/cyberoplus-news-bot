@@ -1,0 +1,88 @@
+name: Publisher watchdog
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Backup heartbeat. The production workflow itself polls every 5 minutes.
+    # This watchdog only intervenes when no production run has started recently.
+    - cron: "4,19,34,49 * * * *"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Wake publisher if production is stale
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from datetime import datetime, timezone
+
+          repo = os.environ["GH_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+          api = "https://api.github.com"
+          workflow = "telegram-collector.yml"
+
+          def request(url, method="GET", data=None):
+              headers = {
+                  "Authorization": f"Bearer {token}",
+                  "Accept": "application/vnd.github+json",
+                  "X-GitHub-Api-Version": "2022-11-28",
+                  "User-Agent": "publisher-watchdog",
+              }
+              body = None
+              if data is not None:
+                  body = json.dumps(data).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(url, headers=headers, method=method, data=body)
+              with urllib.request.urlopen(req, timeout=20) as response:
+                  raw = response.read()
+                  return json.loads(raw) if raw else {}
+
+          runs = request(
+              f"{api}/repos/{repo}/actions/workflows/{workflow}/runs"
+              "?branch=main&per_page=5"
+          ).get("workflow_runs", [])
+
+          now = datetime.now(timezone.utc)
+          newest = None
+          active = False
+          for run in runs:
+              if run.get("status") in {"queued", "in_progress", "waiting", "pending"}:
+                  active = True
+              created = run.get("created_at")
+              if created:
+                  stamp = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                  if newest is None or stamp > newest:
+                      newest = stamp
+
+          if active:
+              print("Production workflow is already active; watchdog does nothing.")
+              raise SystemExit(0)
+
+          age_minutes = None if newest is None else (now - newest).total_seconds() / 60
+          if age_minutes is not None and age_minutes < 12:
+              print(f"Production heartbeat is healthy ({age_minutes:.1f} minutes old).")
+              raise SystemExit(0)
+
+          request(
+              f"{api}/repos/{repo}/actions/workflows/{workflow}/dispatches",
+              method="POST",
+              data={"ref": "main"},
+          )
+          print(
+              "Production workflow was stale"
+              + ("" if age_minutes is None else f" ({age_minutes:.1f} minutes)")
+              + "; watchdog dispatched it."
+          )
+          PY
