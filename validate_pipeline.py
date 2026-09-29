@@ -7,9 +7,16 @@ import json
 import tempfile
 from pathlib import Path
 
-from ai_rewriter import _preserve_ai_facebook_layout, _unwrap_latin_parentheses, _validate_fact_fidelity
+from ai_rewriter import (
+    _preserve_ai_facebook_layout,
+    _strict_entity_tokens,
+    _unwrap_latin_parentheses,
+    _validate_fact_fidelity,
+)
 from image_resolver import build_branded_fallback_asset
 from merge_pipeline_state import merge_ai_state, merge_rows, merge_state, tid_key
+from video_processor import _processing_timeout
+from video_rights import evaluate_video_rights
 
 
 ROOT = Path(__file__).resolve().parent
@@ -81,6 +88,24 @@ def validate_ai_layout_policy() -> None:
         raise RuntimeError("Parenthetical cleanup removed the foreign term itself.")
 
 
+def validate_video_rights_policy() -> None:
+    item = {
+        "telegram_id": 999999999,
+        "media": {
+            "has_video": True,
+            "telegram_post_url": "https://t.me/IntCyberDigest/999999999",
+        },
+    }
+    decision = evaluate_video_rights(item)
+    if decision.reupload_allowed:
+        raise RuntimeError("Unverified third-party Telegram video became reusable.")
+
+    # Twenty minutes must receive substantially more CPU budget than the old
+    # fixed five-minute processing timeout.
+    if _processing_timeout(20 * 60) < 20 * 60:
+        raise RuntimeError("Long-video processing timeout is too short.")
+
+
 def validate_merge_logic() -> None:
     remote = [
         {"telegram_id": 10, "status": "ready", "title": "remote"},
@@ -148,6 +173,8 @@ def main() -> int:
     validate_msa_prompt()
     validate_numeric_fidelity()
     validate_ai_layout_policy()
+    validate_entity_policy()
+    validate_video_rights_policy()
     validate_merge_logic()
     cards = validate_fallback_cards()
 
@@ -157,6 +184,9 @@ def main() -> int:
         "msa_prompt": "ok",
         "numeric_fidelity_regression": "ok",
         "ai_layout_policy": "ok",
+        "entity_policy": "ok",
+        "video_rights_policy": "ok",
+        "long_video_budget": "ok",
         "state_merge_logic": "ok",
         "fallback_cards": cards,
     }
