@@ -645,11 +645,17 @@ def _fit_title(
     # New AI headlines are <= 11 words. The wider cap keeps older queued data safe.
     words = words[:16]
 
-    for size in range(118, 63, -4):
-        font, _ = _load_title_font(size)
-        line_gap = max(18, round(size * 0.24))
+    # Prefer two or three balanced lines for normal 5–11 word news headlines.
+    # This keeps the type large and readable on phones instead of stretching a
+    # medium-size title across almost the entire card width.
+    min_lines = 1 if len(words) <= 4 else 2
+    max_lines = min(3 if len(words) <= 11 else 4, len(words))
 
-        for line_count in range(1, min(4, len(words)) + 1):
+    for size in range(136, 67, -4):
+        font, _ = _load_title_font(size)
+        line_gap = max(20, round(size * 0.20))
+
+        for line_count in range(min_lines, max_lines + 1):
             layout = _balanced_lines(draw, words, font, max_width, line_count)
             if layout is None:
                 continue
@@ -658,10 +664,16 @@ def _fit_title(
             if total_height <= max_height:
                 return font, lines, widths, heights, line_gap, native
 
-    font, _ = _load_title_font(62)
+    font, _ = _load_title_font(68)
+    fallback_count = min(4, len(words))
+    layout = _balanced_lines(draw, words, font, max_width, fallback_count)
+    if layout is not None:
+        lines, widths, heights, native = layout
+        return font, lines, widths, heights, 18, native
+
     lines = [" ".join(words)]
     width, height, native = _line_metrics(draw, lines[0], font)
-    return font, lines, [width], [height], 16, native
+    return font, lines, [width], [height], 18, native
 
 
 def _draw_title_line(
@@ -717,17 +729,20 @@ def build_branded_fallback_asset(
         _strip_direction_controls(title).strip(),
     )
     if not clean_title:
-        clean_title = "تحديث جديد من Cybero Plus"
+        clean_title = "تحديث تقني جديد"
 
     index = _variant_index(clean_title, variant_key)
     image = _load_card_background(index)
     draw = ImageDraw.Draw(image)
 
-    # Keep the headline fully inside the black reading area and away from the logo.
-    left_x = 145
-    right_x = 1460
-    top_y = 200
-    bottom_y = 760
+    # Keep the headline in the visual reading zone: clear of the logo at the
+    # upper-left, clear of the border, and slightly below geometric center.
+    # The right alignment preserves natural Arabic reading order while the
+    # balanced line fitting keeps mixed Arabic/Latin headlines stable.
+    left_x = 155
+    right_x = 1445
+    top_y = 250
+    bottom_y = 735
     max_width = right_x - left_x
     max_height = bottom_y - top_y
 
