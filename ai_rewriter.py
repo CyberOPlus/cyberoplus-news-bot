@@ -42,8 +42,8 @@ DEFAULT_GEMINI_MODELS = (
     "gemini-3.5-flash",
 )
 DEFAULT_GROQ_MODELS = (
-    "qwen/qwen3.8-27b",
     "openai/gpt-oss-120b",
+    "qwen/qwen3.8-27b",
     "openai/gpt-oss-20b",
 )
 DEFAULT_OPENROUTER_MODELS = ("openrouter/free",)
@@ -445,13 +445,23 @@ def _numeric_tokens(text: str) -> set[str]:
     return tokens
 
 
+def _identifier_numeric_tokens(text: str) -> set[str]:
+    """Allow a number when it is already embedded in a source product identifier."""
+    clean = URL_RE.sub("", str(text or ""))
+    values: set[str] = set()
+    for token in re.findall(r"\b[A-Za-z][A-Za-z0-9._+/#:&()'’\\-]*\b", clean):
+        for value in re.findall(r"\d+(?:\.\d+)?", token):
+            values.add(value.rstrip(".,:/-"))
+    return {value for value in values if value}
+
+
 def _cve_tokens(text: str) -> set[str]:
     return {match.group(0).upper() for match in CVE_RE.finditer(str(text or ""))}
 
 
 def _validate_fact_fidelity(source_text: str, facebook_post: str) -> None:
     """Reject obvious fabricated numeric/CVE facts before a post reaches the queue."""
-    source_numbers = _numeric_tokens(source_text)
+    source_numbers = _numeric_tokens(source_text) | _identifier_numeric_tokens(source_text)
     output_numbers = _numeric_tokens(facebook_post)
     invented_numbers = sorted(output_numbers - source_numbers)
     if invented_numbers:
