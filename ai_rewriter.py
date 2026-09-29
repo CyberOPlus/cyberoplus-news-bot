@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare a faithful Moroccan-Darija Facebook post using resilient free AI fallbacks.
+"""Prepare a faithful Modern Standard Arabic Facebook post using resilient free AI fallbacks.
 
 The public entry points are intentionally kept stable because ai_batch_processor.py
 imports normalize_item() and call_gemini().
@@ -22,6 +22,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -803,13 +804,52 @@ def enforce_source_policy(
 
 
 
+def _link_hints(urls: list[str]) -> list[dict[str, str]]:
+    """Expose link type/domain to the AI without exposing fact-like URL slugs."""
+    hints: list[dict[str, str]] = []
+    download_suffixes = (
+        ".zip", ".7z", ".rar", ".tar", ".gz", ".exe", ".msi", ".apk", ".dmg",
+        ".deb", ".rpm", ".iso", ".pdf",
+    )
+
+    for raw in urls:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        try:
+            parsed = urlparse(value)
+        except ValueError:
+            continue
+
+        host = (parsed.hostname or "").lower()
+        path = (parsed.path or "").lower()
+        if not host:
+            continue
+
+        if host in {"github.com", "www.github.com", "gitlab.com", "www.gitlab.com"}:
+            role_hint = "project"
+        elif path.endswith(download_suffixes):
+            role_hint = "download"
+        else:
+            role_hint = "source"
+
+        hint = {"host": host, "role_hint": role_hint}
+        if hint not in hints:
+            hints.append(hint)
+
+    return hints
+
+
 def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
     instructions = PROMPT_PATH.read_text(encoding="utf-8")
     user_payload = {
         "telegram_id": item["telegram_id"],
         "published_at": item["published_at"],
         "text": item["text"],
-        "source_links": item["source_links"],
+        # Do not expose URL paths/slugs to the model. They can contain project,
+        # usernames or filenames that are useful as links but are not facts in
+        # the Telegram prose. The code restores the canonical URL later.
+        "link_hints": _link_hints(item["source_links"]),
         "source_note": item.get("source_note", ""),
         "has_explicit_title": bool(item.get("has_explicit_title")),
         "reply_context": item.get("reply_context") or [],
@@ -824,7 +864,6 @@ def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
         + json.dumps(user_payload, ensure_ascii=False, indent=2)
     )
     return instructions, user_text
-
 
 def _finalize(
     generated: dict[str, Any],
