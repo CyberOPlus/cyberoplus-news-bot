@@ -65,9 +65,12 @@ PROMO_RE = re.compile(
 )
 LATIN_RUN_RE = re.compile(
     r"(?<![\u2068\w])"
-    r"([A-Za-z][A-Za-z0-9._+/#:&()'’\-]*"
-    r"(?:\s+[A-Za-z0-9][A-Za-z0-9._+/#:&()'’\-]*){0,3})"
+    r"([A-Za-z][A-Za-z0-9._+/#:&'’\-]*"
+    r"(?:\s+[A-Za-z0-9][A-Za-z0-9._+/#:&'’\-]*){0,3})"
     r"(?![\w\u2069])"
+)
+LATIN_PAREN_RE = re.compile(
+    r"\(\s*((?=[^()\n]*[A-Za-z])[^()\n\u0600-\u06FF]*?)\s*\)"
 )
 
 OUTPUT_SCHEMA = {
@@ -613,60 +616,24 @@ def _strip_attention_prefix(text: str) -> str:
     return value
 
 
-def _split_long_single_paragraph(paragraph: str) -> list[str]:
-    if len(paragraph) < 430:
-        return [paragraph]
-
-    sentences = [
-        part.strip()
-        for part in re.split(r"(?<=[.!?؟])\s+", paragraph)
-        if part.strip()
-    ]
-    if len(sentences) < 3:
-        return [paragraph]
-
-    target_groups = 3 if len(paragraph) > 760 and len(sentences) >= 5 else 2
-    target_size = len(paragraph) / target_groups
-    groups: list[str] = []
-    current: list[str] = []
-    current_size = 0
-
-    for sentence in sentences:
-        if (
-            current
-            and len(groups) < target_groups - 1
-            and current_size + len(sentence) > target_size
-        ):
-            groups.append(" ".join(current))
-            current = []
-            current_size = 0
-        current.append(sentence)
-        current_size += len(sentence) + 1
-
-    if current:
-        groups.append(" ".join(current))
-    return groups
+def _unwrap_latin_parentheses(text: str) -> str:
+    """Remove decorative parentheses around Latin-only terms in visible Arabic copy."""
+    value = str(text or "")
+    previous = None
+    while value != previous:
+        previous = value
+        value = LATIN_PAREN_RE.sub(lambda match: match.group(1).strip(), value)
+    return value
 
 
-def _format_facebook_paragraphs(text: str) -> str:
+def _preserve_ai_facebook_layout(text: str) -> str:
+    """Sanitize whitespace without rebuilding the structure chosen by the AI."""
     value = _strip_attention_prefix(text)
-    value = re.sub(r"[ \t]+", " ", value)
-    raw = [
-        re.sub(r"\s*\n\s*", " ", part).strip()
-        for part in re.split(r"\n\s*\n+", value)
-        if part.strip()
-    ]
-
-    if not raw:
-        return ""
-
-    if len(raw) == 1:
-        raw = _split_long_single_paragraph(raw[0])
-
-    if len(raw) > 4:
-        raw = raw[:3] + [" ".join(raw[3:])]
-
-    return "\n\n".join(part for part in raw if part)
+    value = value.replace("\r\n", "\n").replace("\r", "\n")
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in value.split("\n")]
+    value = "\n".join(lines)
+    value = re.sub(r"\n{3,}", "\n\n", value).strip()
+    return value
 
 
 def enforce_source_policy(
@@ -768,7 +735,8 @@ def enforce_source_policy(
     body = re.sub(r"(?i)\bBREAKING\s*:", "", body)
     body = re.sub(r"(?i)\bALERT\s*:", "", body)
     body = re.sub(r"(?i)\bURGENT\s*:", "", body)
-    body = _format_facebook_paragraphs(body)
+    body = _unwrap_latin_parentheses(body)
+    body = _preserve_ai_facebook_layout(body)
     if not body:
         raise RuntimeError("AI returned an empty Facebook post.")
 
@@ -797,6 +765,7 @@ def enforce_source_policy(
 
     card_title = str(result.get("card_title") or "").strip()
     card_title = ATTENTION_PREFIX_RE.sub("", card_title, count=1).strip()
+    card_title = _unwrap_latin_parentheses(card_title)
     card_title = re.sub(r"\s+", " ", card_title)
     words = [word for word in card_title.split() if word]
     if len(words) > 11:
