@@ -2,9 +2,16 @@
 name: Telegram to Facebook publisher
 
 on:
-  # Maintenance mode: automatic triggers are intentionally disabled while the
-  # production pipeline is being repaired and validated.
   workflow_dispatch:
+  schedule:
+    # GitHub Actions' shortest supported scheduled cadence is every 5 minutes.
+    # The pipeline publishes every newly detected Telegram item in the same run.
+    - cron: "*/5 * * * *"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/production-trigger.txt"
 
 permissions:
   contents: write
