@@ -77,6 +77,11 @@ def decision() -> tuple[bool, str, dict]:
     state = read_json(STATE, {})
     last_seen = int(state.get("last_seen_id", 0) or 0)
 
+    # Scheduled polls are the reliability heartbeat. Always run the real
+    # collector so a stale/partial cheap Telegram preview can never silence it.
+    if os.environ.get("GITHUB_EVENT_NAME", "").strip() == "schedule":
+        return True, "scheduled_full_poll", {"last_seen": last_seen}
+
     inbox = read_jsonl(INBOX)
     ready = read_jsonl(READY)
     events = read_jsonl(EVENTS)
