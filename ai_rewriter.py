@@ -446,34 +446,52 @@ def _clean_source_text(text: str) -> str:
     return value
 
 
+def _canonical_numeric_token(value: str) -> str:
+    """Normalize harmless formatting differences without changing the fact value."""
+    value = str(value or "").strip()
+    if not value:
+        return ""
+
+    suffix = "%" if value.endswith("%") else ""
+    core = value[:-1] if suffix else value
+    core = core.rstrip(".,:/-")
+
+    # Models may render English thousands separators differently, e.g.
+    # source "1,000" -> Arabic prose "1000". Treat those as the same fact.
+    core = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", core)
+    return core + suffix if core else ""
+
+
 def _numeric_tokens(text: str) -> set[str]:
     clean = URL_RE.sub("", str(text or ""))
     tokens: set[str] = set()
     for match in NUMBER_RE.finditer(clean):
-        value = match.group(0).strip()
-
-        # NUMBER_RE intentionally accepts punctuation used inside versions,
-        # dates and times. Do not let sentence punctuation become part of the
-        # fact token though: "13.60," and "13.60" are the same numeric fact.
-        if value.endswith("%"):
-            core = value[:-1].rstrip(".,:/-")
-            value = core + "%" if core else value
-        else:
-            value = value.rstrip(".,:/-")
-
+        value = _canonical_numeric_token(match.group(0))
         if value:
             tokens.add(value)
     return tokens
 
 
 def _identifier_numeric_tokens(text: str) -> set[str]:
-    """Allow a number when it is already embedded in a source product identifier."""
+    """Extract numeric facts embedded in identifiers or compact units.
+
+    Examples: TA419, GPT-4o and 110TB. These must be compared on both the
+    source and generated sides; otherwise a correctly preserved identifier can
+    look like an omitted number, while a translated compact unit can look like
+    an invented number.
+    """
     clean = URL_RE.sub("", str(text or ""))
     values: set[str] = set()
-    for token in re.findall(r"\b[A-Za-z][A-Za-z0-9._+/#:&()'’\\-]*\b", clean):
-        for value in re.findall(r"\d+(?:\.\d+)?", token):
-            values.add(value.rstrip(".,:/-"))
-    return {value for value in values if value}
+
+    for token in re.findall(r"\b[A-Za-z0-9][A-Za-z0-9._+/#:&()'’\\-]*\b", clean):
+        if not any(ch.isalpha() for ch in token) or not any(ch.isdigit() for ch in token):
+            continue
+        for raw_value in re.findall(r"\d+(?:[.,]\d+)?", token):
+            value = _canonical_numeric_token(raw_value)
+            if value:
+                values.add(value)
+
+    return values
 
 
 def _cve_tokens(text: str) -> set[str]:
@@ -483,7 +501,7 @@ def _cve_tokens(text: str) -> set[str]:
 def _validate_fact_fidelity(source_text: str, facebook_post: str) -> None:
     """Reject obvious fabricated numeric/CVE facts before a post reaches the queue."""
     source_numbers = _numeric_tokens(source_text) | _identifier_numeric_tokens(source_text)
-    output_numbers = _numeric_tokens(facebook_post)
+    output_numbers = _numeric_tokens(facebook_post) | _identifier_numeric_tokens(facebook_post)
     invented_numbers = sorted(output_numbers - source_numbers)
     if invented_numbers:
         raise RuntimeError(
