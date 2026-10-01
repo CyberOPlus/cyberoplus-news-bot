@@ -539,49 +539,34 @@ def _validate_fact_fidelity(source_text: str, facebook_post: str) -> None:
 
 
 def _strict_entity_tokens(entity: str) -> list[str]:
-    """Return only Latin tokens that should remain verbatim after Arabic editing."""
+    """Return only identifiers that truly need verbatim preservation.
+
+    Natural-language names, organisations, places and acronyms may be
+    translated or transliterated correctly in Arabic (for example White House,
+    Proofpoint, FBI or MFA). Blocking publication because those strings are not
+    repeated in Latin script creates false fidelity failures.
+
+    Keep strict matching for high-signal technical identifiers instead:
+    tokens with digits (TA419, GPT-4o), mixed internal capitals (OneDrive,
+    OpenAI/WebKit), or identifier punctuation tied to those signals.
+    """
     tokens = re.findall(r"[A-Za-z][A-Za-z0-9._+/#:&()'’\\-]*", str(entity or ""))
-    if not tokens:
-        return []
-
-    def title_word(token: str) -> bool:
-        letters = "".join(ch for ch in token if ch.isalpha())
-        return (
-            len(letters) >= 2
-            and letters[0].isupper()
-            and letters[1:].islower()
-        )
-
-    all_title_phrase = len(tokens) >= 2 and all(title_word(token) for token in tokens)
     strict: list[str] = []
 
     for token in tokens:
         letters = "".join(ch for ch in token if ch.isalpha())
         has_digit = any(ch.isdigit() for ch in token)
-        # Mixed-case names such as OpenAI/WebKit are immutable, but short
-        # generic acronyms such as AI may be translated naturally into Arabic.
         has_internal_upper = (
             len(letters) >= 2
             and not letters.isupper()
             and any(ch.isupper() for ch in letters[1:])
         )
-        all_upper_identifier = len(letters) >= 3 and letters.isupper()
-        # Lowercase descriptive technical compounds such as use-after-free
-        # may be translated into Arabic. Symbols alone do not make them names.
         has_name_symbol = (
             any(ch in "._+/#:&-" for ch in token)
-            and (has_digit or has_internal_upper or all_upper_identifier)
+            and (has_digit or has_internal_upper)
         )
-        single_title_name = len(tokens) == 1 and title_word(token) and len(token) >= 4
 
-        if (
-            has_digit
-            or has_internal_upper
-            or all_upper_identifier
-            or has_name_symbol
-            or single_title_name
-            or all_title_phrase
-        ):
+        if has_digit or has_internal_upper or has_name_symbol:
             strict.append(token)
 
     return strict
