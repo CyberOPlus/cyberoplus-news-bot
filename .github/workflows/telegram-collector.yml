@@ -320,7 +320,10 @@ jobs:
           echo "- Queue policy: publish every ready item immediately; no intentional Facebook gap" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Continue publisher cycle
-        if: always() && github.ref == 'refs/heads/main'
+        # One immediate follow-up is enough after a schedule/push heartbeat.
+        # A workflow_dispatch run must not dispatch another workflow_dispatch
+        # forever; that hot loop burns Actions/AI quota and amplifies 429s.
+        if: always() && github.ref == 'refs/heads/main' && github.event_name != 'workflow_dispatch'
         uses: actions/github-script@v8
         with:
           script: |
