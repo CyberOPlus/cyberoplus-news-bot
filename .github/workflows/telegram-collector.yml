@@ -12,9 +12,11 @@ on:
       - main
     paths:
       - ".github/production-trigger.txt"
+      - ".github/workflows/telegram-collector.yml"
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: telegram-facebook-pipeline
@@ -73,7 +75,7 @@ jobs:
           published = {
               int(row.get("telegram_id", 0) or 0)
               for row in events
-              if row.get("event") == "published"
+              if row.get("event") in {"published", "duplicate_skipped"}
           }
           pending = [
               row for row in ready
@@ -121,7 +123,7 @@ jobs:
           published = {
               int(row.get("telegram_id", 0) or 0)
               for row in events
-              if row.get("event") == "published"
+              if row.get("event") in {"published", "duplicate_skipped"}
           }
           for row in sorted(ready, key=lambda item: int(item.get("telegram_id", 0) or 0)):
               tid = int(row.get("telegram_id", 0) or 0)
@@ -153,8 +155,8 @@ jobs:
           GROQ_MODELS: openai/gpt-oss-120b,qwen/qwen3.8-27b,openai/gpt-oss-20b
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           OPENROUTER_MODELS: openrouter/free
-          AI_HTTP_TIMEOUT_SECONDS: 20
-          AI_HTTP_ATTEMPTS: 1
+          AI_HTTP_TIMEOUT_SECONDS: 60
+          AI_HTTP_ATTEMPTS: 2
           AI_ITEM_ATTEMPTS: 1
         run: python ai_batch_processor.py
 
@@ -177,7 +179,7 @@ jobs:
           published = {
               int(row.get("telegram_id", 0) or 0)
               for row in events
-              if row.get("event") == "published"
+              if row.get("event") in {"published", "duplicate_skipped"}
           }
           pending = [
               row
@@ -230,7 +232,7 @@ jobs:
           published = {
               int(row.get("telegram_id", 0) or 0)
               for row in events
-              if row.get("event") == "published"
+              if row.get("event") in {"published", "duplicate_skipped"}
           }
           for row in sorted(ready, key=lambda item: int(item.get("telegram_id", 0) or 0)):
               tid = int(row.get("telegram_id", 0) or 0)
@@ -316,3 +318,32 @@ jobs:
           echo "- Full pipeline ran: \`${{ steps.probe.outputs.needs_run }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Schedule: every 5 minutes at :02/:07/:12/... to avoid peak-minute scheduler drops" >> "$GITHUB_STEP_SUMMARY"
           echo "- Queue policy: publish every ready item immediately; no intentional Facebook gap" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Continue publisher cycle
+        if: always() && github.ref == 'refs/heads/main'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const response = await github.rest.actions.listWorkflowRuns({
+              owner,
+              repo,
+              workflow_id: "telegram-collector.yml",
+              branch: "main",
+              per_page: 10,
+            });
+            const activeStatuses = new Set(["queued", "in_progress", "waiting", "pending"]);
+            const otherActive = response.data.workflow_runs.some(
+              run => run.id !== context.runId && activeStatuses.has(run.status)
+            );
+            if (otherActive) {
+              core.info("A successor publisher run is already active or queued.");
+            } else {
+              await github.rest.actions.createWorkflowDispatch({
+                owner,
+                repo,
+                workflow_id: "telegram-collector.yml",
+                ref: "main",
+              });
+              core.info("Queued exactly one successor publisher cycle.");
+            }

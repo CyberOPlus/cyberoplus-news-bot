@@ -254,10 +254,10 @@ def _retry_delay(response: requests.Response, attempt: int) -> float:
     value = response.headers.get("retry-after", "").strip()
     if value:
         try:
-            return min(max(float(value), 0.5), 8.0)
+            return min(max(float(value), 0.5), 30.0)
         except ValueError:
             pass
-    return min(2.0 ** attempt, 6.0)
+    return min(2.0 ** attempt, 15.0)
 
 
 def _post_json(
@@ -662,8 +662,8 @@ def _unwrap_latin_parentheses(text: str) -> str:
 
 
 def _preserve_ai_facebook_layout(text: str) -> str:
-    """Sanitize whitespace without rebuilding the structure chosen by the AI."""
-    value = _strip_attention_prefix(text)
+    """Sanitize whitespace without rebuilding or editorializing the AI copy."""
+    value = str(text or "").strip()
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     lines = [re.sub(r"[ \t]+", " ", line).strip() for line in value.split("\n")]
     value = "\n".join(lines)
@@ -778,40 +778,16 @@ def enforce_source_policy(
     _validate_fact_fidelity(source_text, body)
     _validate_protected_entities(result.get("protected_entities") or [], body)
 
-    attention_prefix = {
-        "breaking": "🚨 عاجل",
-        "warning": "⚠️ تحذير",
-        "important": "❗ مهم",
-        "none": "",
-    }[attention]
-
-    cue = ""
-    if source_url or note:
-        cue = {
-            "source": "المصدر في التعليق الأول.",
-            "tool": "رابط الأداة في التعليق الأول.",
-            "download": "رابط التحميل في التعليق الأول.",
-            "project": "رابط المشروع في التعليق الأول.",
-            "more_info": "الرابط في التعليق الأول.",
-        }.get(result["link_role"], "المصدر في التعليق الأول.")
-
-    sections = [section for section in (attention_prefix, body, cue) if section]
-    result["facebook_post"] = force_rtl_paragraphs("\n\n".join(sections))
+    # The AI owns all visible editorial wording. Code only removes forbidden
+    # links/source branding, validates facts and applies RTL formatting.
+    result["facebook_post"] = force_rtl_paragraphs(body)
 
     card_title = str(result.get("card_title") or "").strip()
-    card_title = ATTENTION_PREFIX_RE.sub("", card_title, count=1).strip()
     card_title = _unwrap_latin_parentheses(card_title)
     card_title = re.sub(r"\s+", " ", card_title)
     words = [word for word in card_title.split() if word]
     if len(words) > 11:
         card_title = " ".join(words[:11]).rstrip("،,:;؛.!?؟")
-
-    if attention == "breaking" and card_title:
-        card_title = "عاجل: " + card_title
-    elif attention == "warning" and card_title:
-        card_title = "تحذير: " + card_title
-    elif attention == "important" and card_title:
-        card_title = "مهم: " + card_title
 
     result["card_title"] = isolate_latin_runs_rtl(card_title)
     return result

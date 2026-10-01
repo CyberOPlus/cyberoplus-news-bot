@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -18,6 +19,7 @@ from image_resolver import (
 )
 from video_processor import prepare_branded_video
 from video_rights import evaluate_video_rights
+from story_dedupe import annotate_story, find_duplicate_story
 
 
 ROOT = Path(__file__).resolve().parent
@@ -115,6 +117,47 @@ def state() -> tuple[dict[int, dict], datetime | None]:
 
 def post_comment(post_id: str, token: str, message: str) -> str:
     return api("POST", f"{post_id}/comments", token, data={"message": message}).get("id", "")
+
+
+def terminal_ids() -> set[int]:
+    terminal = set()
+    for event in read_jsonl(EVENTS):
+        if event.get("event") not in {"published", "duplicate_skipped"}:
+            continue
+        try:
+            tid = int(event.get("telegram_id", 0) or 0)
+        except (TypeError, ValueError):
+            tid = 0
+        if tid > 0:
+            terminal.add(tid)
+    return terminal
+
+
+def _normalize_delivery_message(text: str) -> str:
+    value = re.sub(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]", "", str(text or ""))
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+def recover_existing_remote_post(page_id: str, token: str, message: str) -> str:
+    """Recover a Meta write accepted before timeout/state persistence failed."""
+    needle = _normalize_delivery_message(message)
+    if not needle:
+        return ""
+    try:
+        payload = api(
+            "GET",
+            f"{page_id}/posts",
+            token,
+            params={"fields": "id,message,created_time", "limit": "100"},
+            timeout=45,
+        )
+    except Exception as exc:
+        print(f"WARNING Facebook recovery lookup failed: {exc}", file=sys.stderr)
+        return ""
+    for row in payload.get("data") or []:
+        if _normalize_delivery_message(row.get("message") or "") == needle:
+            return str(row.get("id") or "")
+    return ""
 
 
 def retry_comments(posts: dict[int, dict], token: str) -> None:
@@ -225,11 +268,12 @@ def main() -> int:
         posts, last = state()
 
         ready = read_jsonl(READY)
+        terminal = terminal_ids()
         pending = [
             row
             for row in sorted(ready, key=lambda value: int(value.get("telegram_id", 0)))
             if row.get("status") == "ready"
-            and int(row.get("telegram_id", 0)) not in posts
+            and int(row.get("telegram_id", 0)) not in terminal
         ]
 
         target_id_raw = os.environ.get("FACEBOOK_TARGET_TELEGRAM_ID", "").strip()
@@ -251,11 +295,53 @@ def main() -> int:
             print(json.dumps({"status": "waiting_for_gap", "next_allowed_at": (last + timedelta(minutes=MIN_GAP)).isoformat()}))
             return 0
 
-        item = pending[0]
+        item = annotate_story(pending[0])
         tid = int(item["telegram_id"])
+
+        published_rows = [
+            row for row in ready
+            if int(row.get("telegram_id", 0) or 0) in posts
+        ]
+        duplicate = find_duplicate_story(item, published_rows)
+        if duplicate:
+            append_event({
+                "event": "duplicate_skipped",
+                "telegram_id": tid,
+                "duplicate_of_telegram_id": duplicate["duplicate_of_telegram_id"],
+                "duplicate_reason": duplicate["reason"],
+                "duplicate_score": duplicate["score"],
+                "story_fingerprint": item.get("story_fingerprint") or "",
+                "skipped_at": now_iso(),
+            })
+            print(json.dumps({"status": "duplicate_story_skipped", "telegram_id": tid, **duplicate}, ensure_ascii=False, indent=2))
+            return 0
+
         title = str(item.get("title") or "").strip()
         body = str(item.get("facebook_post") or "").strip()
         message = (title + "\n\n" + body).strip() if title and body else (title or body)
+
+        recovered_post_id = recover_existing_remote_post(page_id, token, message)
+        if recovered_post_id:
+            first_comment = str(item.get("first_comment") or "").strip()
+            append_event({
+                "event": "published",
+                "telegram_id": tid,
+                "facebook_post_id": recovered_post_id,
+                "published_at": now_iso(),
+                "first_comment": first_comment,
+                "source_url": item.get("source_url") or "",
+                "media_mode": "recovered_existing",
+                "recovered": True,
+                "story_fingerprint": item.get("story_fingerprint") or "",
+            })
+            comment_status = publish_first_comment(tid, recovered_post_id, token, first_comment)
+            print(json.dumps({
+                "status": "recovered_existing_facebook_post",
+                "telegram_id": tid,
+                "facebook_post_id": recovered_post_id,
+                "first_comment_status": comment_status,
+            }, ensure_ascii=False, indent=2))
+            return 0
 
         media = item.get("media") or {}
         telegram_post_url = str(media.get("telegram_post_url") or "").strip()
@@ -306,6 +392,7 @@ def main() -> int:
                         "first_comment": first_comment,
                         "source_url": item.get("source_url") or "",
                         "media_mode": "video",
+                        "story_fingerprint": item.get("story_fingerprint") or "",
                         "media_errors": media_errors,
                         "media_diagnostics": diagnostics,
                     }
@@ -392,6 +479,7 @@ def main() -> int:
                 "first_comment": first_comment,
                 "source_url": item.get("source_url") or "",
                 "media_mode": media_mode,
+                "story_fingerprint": item.get("story_fingerprint") or "",
                 "media_errors": media_errors,
                 "media_diagnostics": diagnostics,
             }

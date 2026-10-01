@@ -9,6 +9,7 @@ from pathlib import Path
 
 from ai_rewriter import (
     _preserve_ai_facebook_layout,
+    enforce_source_policy,
     _strict_entity_tokens,
     _unwrap_latin_parentheses,
     _validate_fact_fidelity,
@@ -17,6 +18,7 @@ from image_resolver import build_branded_fallback_asset
 from merge_pipeline_state import merge_ai_state, merge_rows, merge_state, tid_key
 from video_processor import _processing_timeout
 from video_rights import evaluate_video_rights
+from story_dedupe import annotate_story, find_duplicate_story
 
 
 ROOT = Path(__file__).resolve().parent
@@ -75,7 +77,7 @@ def validate_entity_policy() -> None:
 
 
 def validate_ai_layout_policy() -> None:
-    source = "فقرة أولى واضحة.\n\nفقرة ثانية.\n- نقطة أولى\n- نقطة ثانية"
+    source = "🚨 عاجل: فقرة أولى واضحة.\n\nفقرة ثانية.\n- نقطة أولى\n- نقطة ثانية"
     cleaned = _preserve_ai_facebook_layout(source)
     if cleaned != source:
         raise RuntimeError("AI-selected paragraph/list layout was rebuilt unexpectedly.")
@@ -86,6 +88,81 @@ def validate_ai_layout_policy() -> None:
         raise RuntimeError("Latin-only parenthetical terms remain in visible copy.")
     if "Copilot Preview" not in unwrapped or "AI" not in unwrapped:
         raise RuntimeError("Parenthetical cleanup removed the foreign term itself.")
+
+
+def validate_visible_copy_ownership() -> None:
+    generated = {
+        "content_type": "breaking_news",
+        "attention_label": "breaking",
+        "attention_evidence": "source_explicit_breaking",
+        "certainty": "confirmed",
+        "main_fact": "شركة مثال أطلقت تحديثاً جديداً.",
+        "supporting_facts": [],
+        "protected_entities": [],
+        "protected_numbers": [],
+        "title": "",
+        "facebook_post": "شركة مثال أطلقت تحديثاً جديداً.",
+        "first_comment": "",
+        "language": "ar",
+        "source_url": "",
+        "card_title": "شركة مثال تطلق تحديثاً جديداً",
+        "link_role": "none",
+    }
+    result = enforce_source_policy(
+        generated,
+        [],
+        source_text="BREAKING: شركة مثال أطلقت تحديثاً جديداً.",
+    )
+    visible = str(result.get("facebook_post") or "")
+    if "عاجل" in visible or "تحذير" in visible or "❗" in visible:
+        raise RuntimeError("Code injected an editorial attention label into AI copy.")
+    if str(result.get("card_title") or "").startswith(("عاجل", "تحذير", "مهم")):
+        raise RuntimeError("Code injected an attention prefix into AI card title.")
+
+
+def validate_story_dedupe() -> None:
+    first = annotate_story({
+        "telegram_id": 1680,
+        "source_published_at": "2026-09-28T15:21:22+00:00",
+        "status": "ready",
+        "card_title": "توقيف مشتبه به في ShinyHunters بهولندا",
+        "editorial": {
+            "main_fact": "توقيف مشتبه به في ShinyHunters يدعى Umbreon Pepijn van der Stap في هولندا.",
+            "supporting_facts": ["المشتبه به يبلغ 23 سنة.", "احتجز في 16 سبتمبر."],
+            "protected_entities": ["ShinyHunters", "Umbreon", "Pepijn van der Stap"],
+            "protected_numbers": ["16", "23"],
+        },
+    })
+    same_story = annotate_story({
+        "telegram_id": 1682,
+        "source_published_at": "2026-09-28T19:30:52+00:00",
+        "status": "ready",
+        "card_title": "اعتقال Umbreon المشتبه به في قضية ShinyHunters",
+        "editorial": {
+            "main_fact": "اعتقال Pepijn van der Stap المعروف باسم Umbreon والمشتبه به في ShinyHunters.",
+            "supporting_facts": ["عمره 23 سنة.", "أعيد احتجازه في 16 سبتمبر."],
+            "protected_entities": ["ShinyHunters", "Umbreon", "Pepijn van der Stap"],
+            "protected_numbers": ["16", "23"],
+        },
+    })
+    match = find_duplicate_story(same_story, [first])
+    if not match or match.get("duplicate_of_telegram_id") != 1680:
+        raise RuntimeError("Semantic dedupe failed to catch the known duplicate story.")
+
+    real_update = annotate_story({
+        "telegram_id": 1683,
+        "source_published_at": "2026-09-28T20:30:52+00:00",
+        "status": "ready",
+        "card_title": "ShinyHunters تعلن حادثة جديدة لدى شركة أخرى",
+        "editorial": {
+            "main_fact": "ShinyHunters أعلنت حادثة منفصلة تخص شركة أخرى.",
+            "supporting_facts": [],
+            "protected_entities": ["ShinyHunters", "شركة أخرى"],
+            "protected_numbers": [],
+        },
+    })
+    if find_duplicate_story(real_update, [first]):
+        raise RuntimeError("Semantic dedupe incorrectly blocked a materially different update.")
 
 
 def validate_video_rights_policy() -> None:
@@ -173,6 +250,8 @@ def main() -> int:
     validate_msa_prompt()
     validate_numeric_fidelity()
     validate_ai_layout_policy()
+    validate_visible_copy_ownership()
+    validate_story_dedupe()
     validate_entity_policy()
     validate_video_rights_policy()
     validate_merge_logic()
@@ -184,6 +263,8 @@ def main() -> int:
         "msa_prompt": "ok",
         "numeric_fidelity_regression": "ok",
         "ai_layout_policy": "ok",
+        "visible_copy_ai_ownership": "ok",
+        "semantic_story_dedupe": "ok",
         "entity_policy": "ok",
         "video_rights_policy": "ok",
         "long_video_budget": "ok",

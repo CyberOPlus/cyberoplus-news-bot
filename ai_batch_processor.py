@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from ai_rewriter import call_gemini, normalize_item
+from story_dedupe import annotate_story, find_duplicate_story
 
 ROOT = Path(__file__).resolve().parent
 INBOX_PATH = ROOT / "data" / "inbox.jsonl"
@@ -295,6 +296,7 @@ def main() -> int:
 
         state = load_ai_state()
         ready_ids = existing_ready_ids()
+        ready_rows = read_jsonl(READY_PATH)
 
         ordered = sorted(
             inbox,
@@ -340,7 +342,20 @@ def main() -> int:
                 )
                 continue
 
+            ready_row = annotate_story(ready_row)
+            duplicate = find_duplicate_story(ready_row, ready_rows)
+            if duplicate:
+                ready_row["status"] = "duplicate"
+                ready_row["duplicate_of_telegram_id"] = duplicate["duplicate_of_telegram_id"]
+                ready_row["duplicate_reason"] = duplicate["reason"]
+                ready_row["duplicate_score"] = duplicate["score"]
+                print(
+                    "INFO duplicate story suppressed before Facebook: "
+                    + json.dumps({"telegram_id": ready_row["telegram_id"], **duplicate}, ensure_ascii=False)
+                )
+
             append_ready(ready_row)
+            ready_rows.append(ready_row)
             for value in ready_row.get("telegram_ids") or [ready_row["telegram_id"]]:
                 ready_ids.add(int(value))
             prepared_ids.append(int(ready_row["telegram_id"]))
