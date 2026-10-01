@@ -661,14 +661,83 @@ def _unwrap_latin_parentheses(text: str) -> str:
     return value
 
 
+def _split_long_facebook_paragraph(text: str, max_chars: int = 240) -> list[str]:
+    """Split long prose for readability without changing words or punctuation."""
+    value = re.sub(r"[ \t]+", " ", str(text or "")).strip()
+    if not value or len(value) <= max_chars:
+        return [value] if value else []
+
+    sentences = [
+        part.strip()
+        for part in re.split(r"(?<=[.!?؟])\s+", value)
+        if part.strip()
+    ]
+
+    if len(sentences) <= 1:
+        chunks = []
+        remaining = value
+        while len(remaining) > max_chars:
+            cut = remaining.rfind(" ", 0, max_chars + 1)
+            if cut < max_chars // 2:
+                cut = remaining.find(" ", max_chars)
+            if cut <= 0:
+                break
+            chunks.append(remaining[:cut].strip())
+            remaining = remaining[cut + 1 :].strip()
+        if remaining:
+            chunks.append(remaining)
+        return chunks or [value]
+
+    chunks = []
+    current = ""
+    for sentence in sentences:
+        candidate = f"{current} {sentence}".strip() if current else sentence
+        if current and len(candidate) > max_chars:
+            chunks.append(current)
+            current = sentence
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _preserve_ai_facebook_layout(text: str) -> str:
-    """Sanitize whitespace without rebuilding or editorializing the AI copy."""
+    """Keep AI wording intact while formatting long Facebook copy for reading."""
     value = str(text or "").strip()
     value = value.replace("\r\n", "\n").replace("\r", "\n")
-    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in value.split("\n")]
-    value = "\n".join(lines)
-    value = re.sub(r"\n{3,}", "\n\n", value).strip()
-    return value
+
+    output: list[str] = []
+    prose_buffer: list[str] = []
+
+    def flush_prose() -> None:
+        if not prose_buffer:
+            return
+        paragraph = " ".join(prose_buffer).strip()
+        prose_buffer.clear()
+        for chunk in _split_long_facebook_paragraph(paragraph):
+            if output and output[-1] != "":
+                output.append("")
+            output.append(chunk)
+
+    for raw_line in value.split("\n"):
+        line = re.sub(r"[ \t]+", " ", raw_line).strip()
+        if not line:
+            flush_prose()
+            if output and output[-1] != "":
+                output.append("")
+            continue
+
+        if re.match(r"^(?:[-•▪◦]|\d+[.)-])\s+", line):
+            flush_prose()
+            output.append(line)
+            continue
+
+        prose_buffer.append(line)
+
+    flush_prose()
+    formatted = "\n".join(output)
+    return re.sub(r"\n{3,}", "\n\n", formatted).strip()
 
 
 def enforce_source_policy(
