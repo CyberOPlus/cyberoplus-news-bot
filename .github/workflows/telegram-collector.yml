@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   schedule:
     # GitHub Actions' shortest supported scheduled cadence is every 5 minutes.
-    # The pipeline publishes every newly detected Telegram item in the same run.
+    # The pipeline polls continuously at GitHub's 5-minute schedule floor and drains any burst through the persistent queue.
     - cron: "2-59/5 * * * *"
   push:
     branches:
@@ -241,7 +241,7 @@ jobs:
           echo "- Preflight: \`${{ steps.probe.outputs.reason }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Full pipeline ran: \`${{ steps.probe.outputs.needs_run }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Schedule: every 5 minutes at :02/:07/:12/... to avoid peak-minute scheduler drops" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Queue policy: one priority item per publisher attempt; 12-minute minimum gap from config" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Queue policy: one priority item per publisher attempt; 5-minute minimum gap from config" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Continue publisher cycle
         # One immediate follow-up is enough after a schedule/push heartbeat.
