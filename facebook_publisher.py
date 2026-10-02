@@ -293,20 +293,36 @@ def _message_key(text: str) -> str:
 
 
 def _attention_marker(item: dict) -> str:
+    """Return visual attention only; never inject words such as عاجل/تحذير."""
     editorial = item.get("editorial") or {}
     attention = str(editorial.get("attention_label") or "none")
     content_type = str(editorial.get("content_type") or "general")
 
     if attention == "breaking":
-        return "🚨 عاجل:"
+        return "🚨"
     if attention == "warning":
-        return "⚠️ تحذير:"
+        return "⚠️"
     if content_type in {"security_alert", "vulnerability"}:
         return "🔐"
     if content_type == "incident":
         return "🛡️"
     if content_type == "product_update":
         return "🆕"
+    return ""
+
+
+def _rtl_lead(marker: str, title: str) -> str:
+    """Keep the emoji at the visual start of an Arabic RTL headline."""
+    marker = str(marker or "").strip()
+    value = str(title or "").strip()
+    if value.startswith("\u2067") and value.endswith("\u2069"):
+        value = value[1:-1]
+    if marker and value:
+        return "\u2067" + marker + " " + value + "\u2069"
+    if value:
+        return "\u2067" + value + "\u2069"
+    if marker:
+        return "\u2067" + marker + "\u2069"
     return ""
 
 
@@ -370,7 +386,7 @@ def build_delivery_message(item: dict) -> str:
         title = str(item.get("card_title") or "").strip()
 
     marker = _attention_marker(item)
-    lead = f"{marker} {title}".strip() if marker and title else (marker or title)
+    lead = _rtl_lead(marker, title)
 
     if lead and body:
         first = next((part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()), "")
