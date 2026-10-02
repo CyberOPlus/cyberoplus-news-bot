@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - facebook-simple-reader-v2
     paths:
       - ".github/validation-trigger.txt"
 
