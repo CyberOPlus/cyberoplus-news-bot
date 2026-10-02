@@ -175,7 +175,13 @@ TITLE_JARGON_RE = re.compile(
 GENERIC_EDITORIAL_CONCLUSION_RE = re.compile(
     r"(?:هذه التقنية قد|هذا التطور\s+(?:قد\s+)?يفتح\s+باب(?:اً|ا)?|"
     r"قد تفتح الباب|يفتح الباب أمام|يفتح\s+باب(?:اً|ا)?\s+ل|يمهد الطريق|"
-    r"يثير تساؤلات|يشكل خطوة مهمة|يمثل خطوة مهمة)"
+    r"يثير تساؤلات|يشكل خطوة مهمة|يمثل خطوة مهمة|"
+    r"هذا\s+يشير\s+إلى\s+خطر|يشير\s+ذلك\s+إلى\s+خطر)"
+)
+GENERATED_ATTACK_CLAIM_RE = re.compile(r"(?:اختراق|هجوم|استهداف)")
+SOURCE_ATTACK_EVENT_RE = re.compile(
+    r"(?i)\b(?:hacked|hack(?:ed|ing)?|compromised|breached|attack(?:ed|ing)?|targeted)\b|"
+    r"(?:اختراق|هجوم|استهداف)"
 )
 
 
@@ -972,6 +978,10 @@ def enforce_source_policy(
 
     visible_copy = (title + "\n\n" + body).strip()
     _validate_reader_friendly_copy(title, body)
+    if GENERATED_ATTACK_CLAIM_RE.search(visible_copy) and not SOURCE_ATTACK_EVENT_RE.search(source_text):
+        raise RuntimeError(
+            "AI turned an exploit or technical capability into an attack/hack that the source did not report."
+        )
     _validate_fact_fidelity(source_text, visible_copy)
     _validate_protected_entities(result.get("protected_entities") or [], visible_copy)
 
@@ -1309,6 +1319,7 @@ def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "Facebook first paragraph contains too much technical jargon before the reader understands the news",
         "Card title contains too much unexplained technical jargon",
         "AI added a generic editorial conclusion",
+        "AI turned an exploit or technical capability into an attack/hack that the source did not report",
     )
 
     for label, call in attempts:
