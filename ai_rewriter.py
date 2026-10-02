@@ -834,6 +834,13 @@ def _dedupe_lead_object(title: str, body: str) -> str:
             first,
             count=1,
         )
+        first = re.sub(
+            r"^(?:تم\s+)?(?:إطلاق|إصدار|الكشف\s+عن)\s+(?:هذه\s+)?(?:الأداة|أداة)"
+            r"[^،.!؟?]{0,90}?\s+(?=(?:تتيح|تسمح|تدعم|تعمل|تشمل|توفر)\b)",
+            "",
+            first,
+            count=1,
+        )
 
     parts[0] = re.sub(r"\s+", " ", first).strip()
     return "\n\n".join(parts)
