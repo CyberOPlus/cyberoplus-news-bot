@@ -981,15 +981,10 @@ def enforce_source_policy(
     result["source_url"] = source_url
     result["link_role"] = role
 
-    title = _clean_publisher_owned_tokens(result.get("title") or "")
-    if not title:
-        title = _clean_publisher_owned_tokens(result.get("card_title") or "")
-    title = _unwrap_latin_parentheses(title)
-    title = re.sub(r"\s+", " ", title).strip()
-    title_words = [word for word in title.split() if word]
-    if len(title_words) > 16:
-        title = " ".join(title_words[:16]).rstrip("،,:;؛.!?؟")
-    result["title"] = title
+    # Facebook uses one flowing caption. title is retained only for backward
+    # compatibility in stored JSON and must never create a second visible lead.
+    title = ""
+    result["title"] = ""
     result["language"] = "ar"
 
     content_type = str(result.get("content_type") or "general").strip()
@@ -1069,15 +1064,13 @@ def enforce_source_policy(
     body = _clean_publisher_owned_tokens(body)
     body = _unwrap_latin_parentheses(body)
     body = _preserve_ai_facebook_layout(body)
-    body = _remove_exact_title_repeat(title, body)
-    body = _dedupe_lead_object(title, body)
     body = _strip_generic_editorial_conclusion(body)
 
-    if not title and not body:
+    if not body:
         raise RuntimeError("AI returned no visible Facebook copy.")
 
-    visible_copy = (title + "\n\n" + body).strip()
-    _validate_reader_friendly_copy(title, body)
+    visible_copy = body
+    _validate_reader_friendly_copy("", body)
     if GENERATED_ATTACK_CLAIM_RE.search(visible_copy) and not SOURCE_ATTACK_EVENT_RE.search(source_text):
         raise RuntimeError(
             "AI turned an exploit or technical capability into an attack/hack that the source did not report."
@@ -1087,7 +1080,7 @@ def enforce_source_policy(
 
     # The AI owns the factual wording; the publisher owns attention emoji,
     # hashtags and final delivery decoration.
-    result["title"] = force_rtl_paragraphs(title) if title else ""
+    result["title"] = ""
     result["facebook_post"] = force_rtl_paragraphs(body) if body else ""
 
     card_title = str(result.get("card_title") or "").strip()
