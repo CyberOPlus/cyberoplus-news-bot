@@ -99,52 +99,16 @@ jobs:
             echo "No already-ready video requires FFmpeg."
           fi
 
-      - name: Drain already-ready Facebook backlog before AI
+      - name: Publish at most one eligible Facebook item before AI
         if: steps.probe.outputs.needs_run == 'true'
         env:
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
           META_GRAPH_VERSION: v26.0
-          FACEBOOK_MIN_GAP_MINUTES: 0
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t pending_ids < <(python - <<'PY'
-          import json
-          from pathlib import Path
-
-          def rows(path):
-              if not path.exists():
-                  return []
-              return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-
-          ready = rows(Path("data/ready.jsonl"))
-          events = rows(Path("data/facebook_events.jsonl"))
-          published = {
-              int(row.get("telegram_id", 0) or 0)
-              for row in events
-              if row.get("event") in {"published", "duplicate_skipped"}
-          }
-          for row in sorted(ready, key=lambda item: int(item.get("telegram_id", 0) or 0)):
-              tid = int(row.get("telegram_id", 0) or 0)
-              if row.get("status") == "ready" and tid > 0 and tid not in published:
-                  print(tid)
-          PY
-          )
-
-          published_this_run=0
-          failed_this_run=0
-          for tid in "${pending_ids[@]:0:100}"; do
-            echo "Publishing queued Telegram item $tid before AI..."
-            if FACEBOOK_TARGET_TELEGRAM_ID="$tid" python facebook_publisher.py; then
-              published_this_run=$((published_this_run + 1))
-            else
-              failed_this_run=$((failed_this_run + 1))
-              echo "WARNING: item $tid failed; keeping it for retry while continuing the queue." >&2
-            fi
-          done
-
-          echo "Processed $published_this_run already-ready item(s) before AI; failures kept for retry: $failed_this_run."
+          python facebook_publisher.py
 
       - name: Prepare every unprocessed item in Arabic
         if: steps.probe.outputs.needs_run == 'true'
@@ -204,56 +168,16 @@ jobs:
             echo "The next pending post does not need FFmpeg."
           fi
 
-      - name: Publish every ready item to Facebook immediately
+      - name: Publish at most one eligible Facebook item after AI
         if: steps.probe.outputs.needs_run == 'true'
         env:
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
           META_GRAPH_VERSION: v26.0
-          FACEBOOK_MIN_GAP_MINUTES: 0
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t pending_ids < <(python - <<'PY'
-          import json
-          from pathlib import Path
-
-          def rows(path):
-              if not path.exists():
-                  return []
-              return [
-                  json.loads(line)
-                  for line in path.read_text(encoding="utf-8").splitlines()
-                  if line.strip()
-              ]
-
-          ready = rows(Path("data/ready.jsonl"))
-          events = rows(Path("data/facebook_events.jsonl"))
-          published = {
-              int(row.get("telegram_id", 0) or 0)
-              for row in events
-              if row.get("event") in {"published", "duplicate_skipped"}
-          }
-          for row in sorted(ready, key=lambda item: int(item.get("telegram_id", 0) or 0)):
-              tid = int(row.get("telegram_id", 0) or 0)
-              if row.get("status") == "ready" and tid > 0 and tid not in published:
-                  print(tid)
-          PY
-          )
-
-          published_this_run=0
-          failed_this_run=0
-          for tid in "${pending_ids[@]:0:100}"; do
-            echo "Publishing queued Telegram item $tid..."
-            if FACEBOOK_TARGET_TELEGRAM_ID="$tid" python facebook_publisher.py; then
-              published_this_run=$((published_this_run + 1))
-            else
-              failed_this_run=$((failed_this_run + 1))
-              echo "WARNING: item $tid failed; keeping it for retry while continuing the queue." >&2
-            fi
-          done
-
-          echo "Processed $published_this_run queued item(s) in this run; failures kept for retry: $failed_this_run."
+          python facebook_publisher.py
 
       - name: Persist pipeline state without rebase conflicts
         if: always() && steps.probe.outputs.needs_run == 'true'
@@ -317,7 +241,7 @@ jobs:
           echo "- Preflight: \`${{ steps.probe.outputs.reason }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Full pipeline ran: \`${{ steps.probe.outputs.needs_run }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Schedule: every 5 minutes at :02/:07/:12/... to avoid peak-minute scheduler drops" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Queue policy: publish every ready item immediately; no intentional Facebook gap" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Queue policy: one priority item per publisher attempt; 12-minute minimum gap from config" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Continue publisher cycle
         # One immediate follow-up is enough after a schedule/push heartbeat.
