@@ -166,14 +166,15 @@ ATTENTION_PREFIX_RE = re.compile(
     r"\s*[:：\-–—]?\s*"
 )
 DISALLOWED_TECH_TRANSLITERATION_RE = re.compile(
-    r"\bج[اأإآ]?ي?[كل]?\s*بريك\b",
+    r"\bج[اأإآايكلر\s]{0,7}بريك\b",
     flags=re.I,
 )
 TITLE_JARGON_RE = re.compile(
     r"(?i)\b(?:firmware|kernel|webkit|use-after-free|homebrew|jailbreak)\b"
 )
 GENERIC_EDITORIAL_CONCLUSION_RE = re.compile(
-    r"(?:هذه التقنية قد|قد تفتح الباب|يفتح الباب أمام|يمهد الطريق|"
+    r"(?:هذه التقنية قد|هذا التطور\s+(?:قد\s+)?يفتح\s+باب(?:اً|ا)?|"
+    r"قد تفتح الباب|يفتح الباب أمام|يفتح\s+باب(?:اً|ا)?\s+ل|يمهد الطريق|"
     r"يثير تساؤلات|يشكل خطوة مهمة|يمثل خطوة مهمة)"
 )
 
