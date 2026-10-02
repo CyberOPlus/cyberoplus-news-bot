@@ -379,27 +379,24 @@ def _delivery_hashtags(item: dict) -> list[str]:
 
 
 def build_delivery_message(item: dict) -> str:
-    """Render Facebook-native copy without changing factual editorial wording."""
-    title = str(item.get("title") or "").strip()
+    """Render one flowing Facebook caption; no separate headline is displayed."""
     body = str(item.get("facebook_post") or "").strip()
-    if not title:
-        title = str(item.get("card_title") or "").strip()
-
-    marker = _attention_marker(item)
-    lead = _rtl_lead(marker, title)
-
-    if lead and body:
-        first = next((part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()), "")
-        if first and _message_key(first) == _message_key(title):
-            parts = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
-            body = "\n\n".join(parts[1:]).strip()
-
-    visible_parts = [part for part in (lead, body) if str(part or "").strip()]
-    if not visible_parts:
+    if not body:
         raise RuntimeError("Post has no visible Facebook text.")
 
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    if not paragraphs:
+        raise RuntimeError("Post has no visible Facebook text.")
+
+    marker = _attention_marker(item)
+    if marker:
+        first = paragraphs[0]
+        if first.startswith("\u2067") and first.endswith("\u2069"):
+            first = first[1:-1]
+        paragraphs[0] = _rtl_lead(marker, first)
+
     hashtags = _delivery_hashtags(item)
-    message = "\n\n".join(visible_parts)
+    message = "\n\n".join(paragraphs)
     if hashtags:
         message += "\n\n" + " ".join(hashtags)
 
