@@ -2,6 +2,10 @@ name: Publisher watchdog
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows: ["Telegram to Facebook publisher"]
+    types: [completed]
+    branches: [main]
   schedule:
     # Backup heartbeat. Production polls every 5 minutes; watchdog checks every 10.
     # It only intervenes when the production heartbeat goes stale.
@@ -16,6 +20,10 @@ permissions:
   actions: write
   contents: read
 
+concurrency:
+  group: publisher-watchdog-main
+  cancel-in-progress: false
+
 jobs:
   watchdog:
     runs-on: ubuntu-24.04
@@ -25,6 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPOSITORY: ${{ github.repository }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
         shell: bash
         run: |
           python - <<'PY'
@@ -76,7 +85,10 @@ jobs:
               raise SystemExit(0)
 
           age_minutes = None if newest is None else (now - newest).total_seconds() / 60
-          if age_minutes is not None and age_minutes < 8:
+          # Completion without an active successor means the chain broke.
+          # Recover immediately, including after cancellation/timeout/setup errors.
+          chain_ended = os.environ.get("GITHUB_EVENT_NAME") == "workflow_run"
+          if not chain_ended and age_minutes is not None and age_minutes < 8:
               print(f"Production heartbeat is healthy ({age_minutes:.1f} minutes old).")
               raise SystemExit(0)
 

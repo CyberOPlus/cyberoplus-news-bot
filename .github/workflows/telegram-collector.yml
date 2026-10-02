@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
   schedule:
     # GitHub Actions' shortest supported scheduled cadence is every 5 minutes.
-    # The pipeline polls continuously at GitHub's 5-minute schedule floor and drains any burst through the persistent queue.
+    # Backup heartbeat; the worker also queues its successor after a short pause.
     - cron: "2-59/5 * * * *"
   push:
     branches:
@@ -31,6 +31,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: main
           fetch-depth: 1
 
       - name: Cheap preflight — skip idle runs
@@ -240,16 +241,20 @@ jobs:
           echo "### Cybero Plus pipeline" >> "$GITHUB_STEP_SUMMARY"
           echo "- Preflight: \`${{ steps.probe.outputs.reason }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Full pipeline ran: \`${{ steps.probe.outputs.needs_run }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Schedule: every 5 minutes at :02/:07/:12/... to avoid peak-minute scheduler drops" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Polling: continuous successor runs with a 60-second pause; 5-minute schedule is backup" >> "$GITHUB_STEP_SUMMARY"
           echo "- Queue policy: one priority item per publisher attempt; 5-minute minimum gap from config" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Pace continuous monitoring
+        if: always() && github.ref == 'refs/heads/main'
+        run: sleep 60
+
       - name: Continue publisher cycle
-        # One immediate follow-up is enough after a schedule/push heartbeat.
-        # A workflow_dispatch run must not dispatch another workflow_dispatch
-        # forever; that hot loop burns Actions/AI quota and amplifies 429s.
-        if: always() && github.ref == 'refs/heads/main' && github.event_name != 'workflow_dispatch'
+        # Idle and dispatched runs must keep monitoring when cron is delayed.
+        # The pause above bounds idle polling; Facebook retains its 5-minute gap.
+        if: always() && github.ref == 'refs/heads/main'
         uses: actions/github-script@v8
         with:
+          retries: 3
           script: |
             const { owner, repo } = context.repo;
             const response = await github.rest.actions.listWorkflowRuns({
