@@ -236,6 +236,13 @@ def validate_soft_caption_cleanup() -> None:
     if not cleaned2.startswith("تتيح تشغيل"):
         raise RuntimeError("Extended tool lead deduplication regressed.")
 
+    cleaned3 = _dedupe_lead_object(
+        "أداة كسر حماية جديدة تشغّل جميع إصدارات PS5",
+        "تم إطلاق أداة كسر حماية تسمح بتشغيل برامج غير رسمية على PS5 عبر موقع ويب.",
+    )
+    if not cleaned3.startswith("تسمح بتشغيل"):
+        raise RuntimeError("Tool-launch lead deduplication regressed.")
+
     stripped = _strip_generic_editorial_conclusion(
         "هذه هي التفاصيل المؤكدة.\n\nهذا التطور يفتح باباً لاستخدامات جديدة."
     )
