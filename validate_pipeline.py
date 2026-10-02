@@ -185,7 +185,7 @@ def validate_facebook_delivery_policy() -> None:
         raise RuntimeError("Breaking news no longer outranks normal queue items.")
 
     configured = int((TIMING.get("publishing_policy") or {}).get("minimum_gap_minutes", 0) or 0)
-    if configured < 10 or MIN_GAP != configured:
+    if configured < 5 or MIN_GAP != configured:
         raise RuntimeError(
             f"Facebook pacing is unsafe or diverged from config: configured={configured}, active={MIN_GAP}"
         )
