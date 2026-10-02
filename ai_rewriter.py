@@ -180,8 +180,9 @@ GENERIC_EDITORIAL_CONCLUSION_RE = re.compile(
 )
 GENERATED_ATTACK_CLAIM_RE = re.compile(r"(?:اختراق|هجوم|استهداف)")
 SOURCE_ATTACK_EVENT_RE = re.compile(
-    r"(?i)\b(?:hacked|hack(?:ed|ing)?|compromised|breached|attack(?:ed|ing)?|targeted)\b|"
-    r"(?:اختراق|هجوم|استهداف)"
+    r"(?i)\b(?:hacked|hack(?:ed|ing)?|compromised|breached|attack(?:ed|ing|ers?)?|"
+    r"targeted|intrusion(?:s)?|intruder(?:s)?|threat\s+actor(?:s)?|unauthorized\s+access)\b|"
+    r"(?:اختراق|هجوم|استهداف|تسلل|مهاجم(?:ون|ين)?)"
 )
 
 
