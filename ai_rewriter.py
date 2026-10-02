@@ -165,6 +165,17 @@ ATTENTION_PREFIX_RE = re.compile(
     r"(?:عاجل|تحذير(?: أمني)?|تنبيه(?: أمني)?|مهم|BREAKING|URGENT|ALERT|WARNING)"
     r"\s*[:：\-–—]?\s*"
 )
+DISALLOWED_TECH_TRANSLITERATION_RE = re.compile(
+    r"(?:جايبريك|جايكربريك|جيلبريك|جيك\s*بريك|جيل\s*بريك)",
+    flags=re.I,
+)
+TITLE_JARGON_RE = re.compile(
+    r"(?i)\b(?:firmware|kernel|webkit|use-after-free|homebrew|jailbreak)\b"
+)
+GENERIC_EDITORIAL_CONCLUSION_RE = re.compile(
+    r"(?:هذه التقنية قد|قد تفتح الباب|يفتح الباب أمام|يمهد الطريق|"
+    r"يثير تساؤلات|يشكل خطوة مهمة|يمثل خطوة مهمة)"
+)
 
 
 
@@ -684,6 +695,36 @@ def _remove_exact_title_repeat(title: str, body: str) -> str:
     return body
 
 
+def _validate_reader_friendly_copy(title: str, body: str) -> None:
+    """Reject copy that is accurate but unnecessarily hard for a general reader."""
+    clean_title = re.sub(
+        r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]",
+        "",
+        str(title or ""),
+    )
+    clean_body = re.sub(
+        r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]",
+        "",
+        str(body or ""),
+    )
+    visible = f"{clean_title}\n{clean_body}"
+
+    if DISALLOWED_TECH_TRANSLITERATION_RE.search(visible):
+        raise RuntimeError(
+            "AI used an invented Arabic transliteration for a technical term."
+        )
+
+    if TITLE_JARGON_RE.search(clean_title):
+        raise RuntimeError(
+            "Facebook title starts too technical for a general Arabic reader."
+        )
+
+    if GENERIC_EDITORIAL_CONCLUSION_RE.search(clean_body):
+        raise RuntimeError(
+            "AI added a generic editorial conclusion instead of source-grounded news."
+        )
+
+
 def _unwrap_latin_parentheses(text: str) -> str:
     """Remove decorative parentheses around Latin-only terms in visible Arabic copy."""
     value = str(text or "")
@@ -887,6 +928,7 @@ def enforce_source_policy(
         raise RuntimeError("AI returned no visible Facebook copy.")
 
     visible_copy = (title + "\n\n" + body).strip()
+    _validate_reader_friendly_copy(title, body)
     _validate_fact_fidelity(source_text, visible_copy)
     _validate_protected_entities(result.get("protected_entities") or [], visible_copy)
 
@@ -898,6 +940,10 @@ def enforce_source_policy(
     card_title = str(result.get("card_title") or "").strip()
     card_title = _unwrap_latin_parentheses(card_title)
     card_title = re.sub(r"\s+", " ", card_title)
+    if DISALLOWED_TECH_TRANSLITERATION_RE.search(card_title):
+        raise RuntimeError("AI used an invented Arabic transliteration in card title.")
+    if TITLE_JARGON_RE.search(card_title):
+        raise RuntimeError("Card title is too technical for a general Arabic reader.")
     words = [word for word in card_title.split() if word]
     if len(words) > 11:
         card_title = " ".join(words[:11]).rstrip("،,:;؛.!?؟")
