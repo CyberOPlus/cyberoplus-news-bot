@@ -190,7 +190,7 @@ def validate_reader_friendly_policy() -> None:
 
     bad_cases = (
         (
-            "ثغرة WebKit جديدة في PS5",
+            "ثغرة WebKit use-after-free جديدة في PS5",
             "يمكن استغلالها عبر المتصفح.",
         ),
         (
