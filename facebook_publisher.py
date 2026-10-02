@@ -25,10 +25,35 @@ from story_dedupe import annotate_story, find_duplicate_story
 ROOT = Path(__file__).resolve().parent
 READY = ROOT / "data" / "ready.jsonl"
 EVENTS = ROOT / "data" / "facebook_events.jsonl"
+TIMING_CONFIG = ROOT / "config" / "timing_strategy.json"
 GRAPH_VERSION = os.environ.get("META_GRAPH_VERSION", "v26.0")
 GRAPH_BASE = f"https://graph.facebook.com/{GRAPH_VERSION}"
-MIN_GAP = int(os.environ.get("FACEBOOK_MIN_GAP_MINUTES", "0"))
 VIDEO_UPLOAD_TIMEOUT = int(os.environ.get("FACEBOOK_VIDEO_UPLOAD_TIMEOUT_SECONDS", "1800"))
+
+
+def _load_timing_config() -> dict:
+    try:
+        return json.loads(TIMING_CONFIG.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"WARNING timing config fallback: {exc}", file=sys.stderr)
+        return {}
+
+
+TIMING = _load_timing_config()
+
+
+def _configured_min_gap() -> int:
+    override = os.environ.get("FACEBOOK_MIN_GAP_MINUTES", "").strip()
+    if override:
+        try:
+            return max(0, int(override))
+        except ValueError as exc:
+            raise RuntimeError("FACEBOOK_MIN_GAP_MINUTES must be an integer") from exc
+    policy = TIMING.get("publishing_policy") or {}
+    return max(0, int(policy.get("minimum_gap_minutes", 12)))
+
+
+MIN_GAP = _configured_min_gap()
 
 
 def now() -> datetime:
@@ -256,6 +281,174 @@ def _unique(values: list[str]) -> list[str]:
     return result
 
 
+def _plain_visible(text: str) -> str:
+    value = re.sub(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]", "", str(text or ""))
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _message_key(text: str) -> str:
+    value = _plain_visible(text)
+    value = re.sub(r"[^\w\u0600-\u06FF]+", " ", value, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+def _attention_marker(item: dict) -> str:
+    editorial = item.get("editorial") or {}
+    attention = str(editorial.get("attention_label") or "none")
+    content_type = str(editorial.get("content_type") or "general")
+
+    if attention == "breaking":
+        return "🚨 عاجل:"
+    if attention == "warning":
+        return "⚠️ تحذير:"
+    if content_type in {"security_alert", "vulnerability"}:
+        return "🔐"
+    if content_type == "incident":
+        return "🛡️"
+    if content_type == "product_update":
+        return "🆕"
+    return ""
+
+
+def _topic_hashtag(item: dict) -> str:
+    policy = TIMING.get("caption_policy") or {}
+    if not policy.get("add_topic_hashtag", True):
+        return ""
+    tags = policy.get("topic_hashtags") or {}
+    editorial = item.get("editorial") or {}
+    content_type = str(editorial.get("content_type") or "general")
+    text = _plain_visible(
+        " ".join(
+            [
+                str(item.get("title") or ""),
+                str(item.get("card_title") or ""),
+                str(item.get("facebook_post") or ""),
+                str(editorial.get("main_fact") or ""),
+            ]
+        )
+    ).casefold()
+
+    if content_type in {"security_alert", "vulnerability", "incident"} or re.search(
+        r"\b(?:cve-|malware|ransomware|phishing|exploit|breach|hack|cyber)\b|"
+        r"(?:ثغرة|اختراق|برمجية خبيثة|فدية|تصيد|أمن سيبراني|تسريب بيانات)",
+        text,
+        flags=re.I,
+    ):
+        return str(tags.get("cybersecurity") or "#الأمن_السيبراني")
+    if re.search(
+        r"\b(?:openai|anthropic|gemini|claude|chatgpt|llm|gpt[- ]?\w*)\b|"
+        r"(?:الذكاء الاصطناعي|نموذج لغوي|نماذج لغوية)",
+        text,
+        flags=re.I,
+    ):
+        return str(tags.get("artificial_intelligence") or "#الذكاء_الاصطناعي")
+    if re.search(r"\bprivacy\b|(?:الخصوصية|بيانات شخصية)", text, flags=re.I):
+        return str(tags.get("privacy") or "#الخصوصية")
+    if content_type in {"tool", "product_update", "report", "update", "breaking_news"} or re.search(
+        r"\b(?:apple|microsoft|google|android|iphone|windows|linux|software|hardware|tech)\b|"
+        r"(?:تقنية|تحديث|برنامج|هاتف|نظام تشغيل)",
+        text,
+        flags=re.I,
+    ):
+        return str(tags.get("technology") or "#تقنية")
+    return ""
+
+
+def _delivery_hashtags(item: dict) -> list[str]:
+    policy = TIMING.get("caption_policy") or {}
+    maximum = max(1, int(policy.get("max_hashtags", 2)))
+    brand = str(policy.get("brand_hashtag") or "#CyberoPlus").strip()
+    values = _unique([_topic_hashtag(item), brand])
+    return values[:maximum]
+
+
+def build_delivery_message(item: dict) -> str:
+    """Render Facebook-native copy without changing factual editorial wording."""
+    title = str(item.get("title") or "").strip()
+    body = str(item.get("facebook_post") or "").strip()
+    if not title:
+        title = str(item.get("card_title") or "").strip()
+
+    marker = _attention_marker(item)
+    lead = f"{marker} {title}".strip() if marker and title else (marker or title)
+
+    if lead and body:
+        first = next((part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()), "")
+        if first and _message_key(first) == _message_key(title):
+            parts = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+            body = "\n\n".join(parts[1:]).strip()
+
+    visible_parts = [part for part in (lead, body) if str(part or "").strip()]
+    if not visible_parts:
+        raise RuntimeError("Post has no visible Facebook text.")
+
+    hashtags = _delivery_hashtags(item)
+    message = "\n\n".join(visible_parts)
+    if hashtags:
+        message += "\n\n" + " ".join(hashtags)
+
+    if re.search(r"https?://", message, flags=re.I):
+        raise RuntimeError("Facebook body unexpectedly contains an external URL.")
+    if len(re.findall(r"(?<!\w)#[\w\u0600-\u06FF_]+", message)) > 2:
+        raise RuntimeError("Facebook body contains too many hashtags.")
+    return message.strip()
+
+
+def _source_datetime(item: dict) -> datetime | None:
+    raw = str(item.get("source_published_at") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def queue_priority_key(item: dict) -> tuple:
+    """Urgent first, then security relevance, with an aging guard for normal news."""
+    editorial = item.get("editorial") or {}
+    attention = str(editorial.get("attention_label") or "none")
+    content_type = str(editorial.get("content_type") or "general")
+    attention_rank = {"breaking": 0, "warning": 1, "important": 2, "none": 3}.get(attention, 3)
+    source_dt = _source_datetime(item)
+    if source_dt and now() - source_dt >= timedelta(hours=int((TIMING.get("publishing_policy") or {}).get("aging_boost_after_hours", 6))):
+        attention_rank = min(attention_rank, 2)
+    type_rank = {
+        "breaking_news": 0,
+        "security_alert": 0,
+        "vulnerability": 0,
+        "incident": 1,
+        "product_update": 2,
+        "update": 2,
+        "tool": 3,
+        "report": 3,
+        "general": 4,
+    }.get(content_type, 4)
+    timestamp = source_dt.timestamp() if source_dt else 0.0
+    tid = int(item.get("telegram_id", 0) or 0)
+    return (attention_rank, type_rank, -timestamp, -tid)
+
+
+def delivery_metadata(item: dict, message: str) -> dict:
+    source_dt = _source_datetime(item)
+    source_age_minutes = None
+    if source_dt:
+        source_age_minutes = max(0, int((now() - source_dt).total_seconds() // 60))
+    editorial = item.get("editorial") or {}
+    return {
+        "policy_version": int(TIMING.get("version", 0) or 0),
+        "content_type": editorial.get("content_type") or "general",
+        "attention_label": editorial.get("attention_label") or "none",
+        "hashtags": _delivery_hashtags(item),
+        "attention_marker": _attention_marker(item),
+        "caption_length": len(_plain_visible(message)),
+        "paragraph_count": len([p for p in re.split(r"\n\s*\n", message) if p.strip()]),
+        "source_age_minutes": source_age_minutes,
+        "minimum_gap_minutes": MIN_GAP,
+    }
+
+
 def main() -> int:
     try:
         page_id = os.environ["FACEBOOK_PAGE_ID"].strip()
@@ -271,10 +464,11 @@ def main() -> int:
         terminal = terminal_ids()
         pending = [
             row
-            for row in sorted(ready, key=lambda value: int(value.get("telegram_id", 0)))
+            for row in ready
             if row.get("status") == "ready"
             and int(row.get("telegram_id", 0)) not in terminal
         ]
+        pending = sorted(pending, key=queue_priority_key)
 
         target_id_raw = os.environ.get("FACEBOOK_TARGET_TELEGRAM_ID", "").strip()
         if target_id_raw:
@@ -316,9 +510,8 @@ def main() -> int:
             print(json.dumps({"status": "duplicate_story_skipped", "telegram_id": tid, **duplicate}, ensure_ascii=False, indent=2))
             return 0
 
-        title = str(item.get("title") or "").strip()
-        body = str(item.get("facebook_post") or "").strip()
-        message = (title + "\n\n" + body).strip() if title and body else (title or body)
+        message = build_delivery_message(item)
+        delivery_meta = delivery_metadata(item, message)
 
         recovered_post_id = recover_existing_remote_post(page_id, token, message)
         if recovered_post_id:
@@ -332,6 +525,7 @@ def main() -> int:
                 "source_url": item.get("source_url") or "",
                 "media_mode": "recovered_existing",
                 "recovered": True,
+                "delivery": delivery_meta,
                 "story_fingerprint": item.get("story_fingerprint") or "",
             })
             comment_status = publish_first_comment(tid, recovered_post_id, token, first_comment)
@@ -392,6 +586,7 @@ def main() -> int:
                         "first_comment": first_comment,
                         "source_url": item.get("source_url") or "",
                         "media_mode": "video",
+                        "delivery": delivery_meta,
                         "story_fingerprint": item.get("story_fingerprint") or "",
                         "media_errors": media_errors,
                         "media_diagnostics": diagnostics,
@@ -479,6 +674,7 @@ def main() -> int:
                 "first_comment": first_comment,
                 "source_url": item.get("source_url") or "",
                 "media_mode": media_mode,
+                "delivery": delivery_meta,
                 "story_fingerprint": item.get("story_fingerprint") or "",
                 "media_errors": media_errors,
                 "media_diagnostics": diagnostics,
