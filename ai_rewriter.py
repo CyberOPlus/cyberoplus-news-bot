@@ -715,18 +715,33 @@ def _opening_words(text: str, limit: int = 3) -> list[str]:
 
 
 def _repeats_headline_opening(title: str, body: str) -> bool:
-    """Catch obvious headline/body restarts such as 'أداة جديدة...' twice."""
+    """Catch headline/body restarts without blocking necessary entity mentions."""
     first_paragraph = next(
         (part.strip() for part in re.split(r"\n\s*\n", str(body or "")) if part.strip()),
         "",
     )
     title_words = _opening_words(title, 3)
     body_words = _opening_words(first_paragraph, 3)
-    if len(title_words) >= 2 and len(body_words) >= 2:
-        if title_words[:2] == body_words[:2]:
-            return True
-    if len(title_words) >= 3 and len(body_words) >= 3:
-        if title_words[:3] == body_words[:3]:
+    if len(title_words) >= 2 and len(body_words) >= 2 and title_words[:2] == body_words[:2]:
+        return True
+    if len(title_words) >= 3 and len(body_words) >= 3 and title_words[:3] == body_words[:3]:
+        return True
+
+    clean_title = re.sub(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]", "", str(title or ""))
+    clean_first = re.sub(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]", "", first_paragraph)
+    lead_pairs = (
+        ("أداة جديدة", "الأداة الجديدة"),
+        ("تحديث جديد", "التحديث الجديد"),
+        ("ثغرة جديدة", "الثغرة الجديدة"),
+        ("ميزة جديدة", "الميزة الجديدة"),
+        ("إصدار جديد", "الإصدار الجديد"),
+        ("نسخة جديدة", "النسخة الجديدة"),
+        ("خدمة جديدة", "الخدمة الجديدة"),
+        ("تقرير جديد", "التقرير الجديد"),
+        ("نموذج جديد", "النموذج الجديد"),
+    )
+    for indefinite, definite in lead_pairs:
+        if indefinite in clean_title and (indefinite in clean_first or definite in clean_first):
             return True
     return False
 
