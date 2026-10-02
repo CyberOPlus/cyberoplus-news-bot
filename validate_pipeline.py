@@ -140,8 +140,11 @@ def validate_facebook_delivery_policy() -> None:
         },
     }
     message = build_delivery_message(security_item)
-    if not message.startswith("⚠️ تحذير:"):
-        raise RuntimeError("Warning delivery marker was not applied deterministically.")
+    plain_message = message.replace("\u2067", "").replace("\u2069", "")
+    if not plain_message.startswith("⚠️ "):
+        raise RuntimeError("Warning emoji was not applied at the RTL headline start.")
+    if "تحذير:" in plain_message or "عاجل:" in plain_message or "مهم:" in plain_message:
+        raise RuntimeError("Text attention labels leaked into Facebook delivery.")
     if "#الأمن_السيبراني" not in message or "#CyberoPlus" not in message:
         raise RuntimeError("Expected Cybero Plus/topic hashtags are missing.")
     if message.count("#") > 2:
@@ -196,6 +199,10 @@ def validate_reader_friendly_policy() -> None:
         (
             "أداة جديدة لأجهزة PS5",
             "تم الكشف عن جايبريك جديد للأجهزة.",
+        ),
+        (
+            "أداة جديدة تفتح جميع إصدارات PS5",
+            "أداة جديدة تتيح تشغيل برامج غير رسمية على الجهاز.",
         ),
         (
             "أداة جديدة لأجهزة PS5",
