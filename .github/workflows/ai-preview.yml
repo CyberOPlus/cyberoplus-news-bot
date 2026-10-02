@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - facebook-clean-rtl-caption
     paths:
       - ".github/validation-trigger.txt"
 
