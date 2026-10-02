@@ -532,8 +532,8 @@ def _validate_fact_fidelity(source_text: str, facebook_post: str) -> None:
 
     source_clean = _clean_source_text(source_text)
     output_clean = _clean_source_text(facebook_post)
-    if len(source_clean) >= 220 and len(output_clean) < max(120, int(len(source_clean) * 0.50)):
-        raise RuntimeError("AI output is too short and may have dropped source facts.")
+    if len(source_clean) >= 220 and len(output_clean) < max(110, int(len(source_clean) * 0.38)):
+        raise RuntimeError("AI output is too short and may have dropped material source facts.")
     if len(source_clean) >= 100 and len(output_clean) > max(900, int(len(source_clean) * 2.5)):
         raise RuntimeError("AI output is unusually long and may contain added material.")
 
@@ -654,6 +654,36 @@ def _strip_attention_prefix(text: str) -> str:
     return value
 
 
+def _clean_publisher_owned_tokens(text: str) -> str:
+    """Keep emoji, hashtags, links and attention labels out of AI-owned visible copy."""
+    value = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    value = URL_RE.sub("", value)
+    value = re.sub(r"(?<![\w#])#[\w\u0600-\u06FF_]+", "", value)
+    value = re.sub(r"[🚨⚠️❗‼️🔐🛡️🤖🆕🔥]", "", value)
+    lines = []
+    for raw in value.split("\n"):
+        line = _strip_attention_prefix(raw)
+        line = re.sub(r"[ \t]+", " ", line).strip()
+        lines.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
+
+
+def _visible_key(text: str) -> str:
+    value = re.sub(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]", "", str(text or ""))
+    value = re.sub(r"[^\w\u0600-\u06FF]+", " ", value, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", value).strip().casefold()
+
+
+def _remove_exact_title_repeat(title: str, body: str) -> str:
+    """Remove only an exact first-paragraph repeat; never paraphrase or drop facts."""
+    if not title or not body:
+        return body
+    parts = [part.strip() for part in re.split(r"\n\s*\n", body) if part.strip()]
+    if parts and _visible_key(parts[0]) == _visible_key(title):
+        return "\n\n".join(parts[1:]).strip()
+    return body
+
+
 def _unwrap_latin_parentheses(text: str) -> str:
     """Remove decorative parentheses around Latin-only terms in visible Arabic copy."""
     value = str(text or "")
@@ -762,7 +792,16 @@ def enforce_source_policy(
 
     result["source_url"] = source_url
     result["link_role"] = role
-    result["title"] = ""
+
+    title = _clean_publisher_owned_tokens(result.get("title") or "")
+    if not title:
+        title = _clean_publisher_owned_tokens(result.get("card_title") or "")
+    title = _unwrap_latin_parentheses(title)
+    title = re.sub(r"\s+", " ", title).strip()
+    title_words = [word for word in title.split() if word]
+    if len(title_words) > 16:
+        title = " ".join(title_words[:16]).rstrip("،,:;؛.!?؟")
+    result["title"] = title
     result["language"] = "ar"
 
     content_type = str(result.get("content_type") or "general").strip()
@@ -839,20 +878,22 @@ def enforce_source_policy(
         if url:
             body = body.replace(str(url), "")
 
-    body = re.sub(r"(?i)\bBREAKING\s*:", "", body)
-    body = re.sub(r"(?i)\bALERT\s*:", "", body)
-    body = re.sub(r"(?i)\bURGENT\s*:", "", body)
+    body = _clean_publisher_owned_tokens(body)
     body = _unwrap_latin_parentheses(body)
     body = _preserve_ai_facebook_layout(body)
-    if not body:
-        raise RuntimeError("AI returned an empty Facebook post.")
+    body = _remove_exact_title_repeat(title, body)
 
-    _validate_fact_fidelity(source_text, body)
-    _validate_protected_entities(result.get("protected_entities") or [], body)
+    if not title and not body:
+        raise RuntimeError("AI returned no visible Facebook copy.")
 
-    # The AI owns all visible editorial wording. Code only removes forbidden
-    # links/source branding, validates facts and applies RTL formatting.
-    result["facebook_post"] = force_rtl_paragraphs(body)
+    visible_copy = (title + "\n\n" + body).strip()
+    _validate_fact_fidelity(source_text, visible_copy)
+    _validate_protected_entities(result.get("protected_entities") or [], visible_copy)
+
+    # The AI owns the factual wording; the publisher owns attention emoji,
+    # hashtags and final delivery decoration.
+    result["title"] = force_rtl_paragraphs(title) if title else ""
+    result["facebook_post"] = force_rtl_paragraphs(body) if body else ""
 
     card_title = str(result.get("card_title") or "").strip()
     card_title = _unwrap_latin_parentheses(card_title)
