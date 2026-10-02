@@ -9,3 +9,4 @@ clean rtl caption validation v12
 clean rtl caption validation v13
 clean rtl caption validation v13
 clean rtl caption validation v14
+body-only facebook caption validation
