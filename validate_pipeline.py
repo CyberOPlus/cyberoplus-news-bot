@@ -37,8 +37,9 @@ def validate_msa_prompt() -> None:
         '"language": "ar"',
         "جمهور عربي",
         "قارئ عربي عادي مهتم بالتقنية لكنه غير متخصص",
-        "ماذا حدث؟ لماذا يهم القارئ؟ ثم ما التفاصيل التقنية؟",
-        "يستطيع قارئ عربي غير متخصص أن يفهم ما حدث ولماذا يهمه من أول سطرين",
+        'title يجب أن يكون دائماً نصاً فارغاً ""',
+        "facebook_post هو المنشور الكامل من أول كلمة إلى آخر فقرة",
+        "أول جملة في facebook_post هي الـhook نفسها",
     )
     forbidden = (
         "بالدارجة المغربية",
@@ -61,11 +62,10 @@ def validate_numeric_fidelity() -> None:
     output = "يدعم الإصدار النطاق من 7.00 إلى 13.60 وفقاً للمصدر."
     _validate_fact_fidelity(source, output)
 
-    # A product identifier may legitimately be expanded while preserving its
-    # embedded generation number: PS5 -> PlayStation 5.
+    # Keep product/model identifiers in their original form inside Arabic copy.
     _validate_fact_fidelity(
         "The update works on PS5 firmware 13.60.",
-        "يعمل التحديث على PlayStation 5 بإصدار 13.60.",
+        "يعمل التحديث على PS5 بإصدار 13.60.",
     )
 
 
