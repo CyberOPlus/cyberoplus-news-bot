@@ -2,3 +2,4 @@ validate-video-rights-long-video-v2
 simple-reader validation
 simple-reader terminology validation
 simple-reader final validation
+reader-friendly code validation
