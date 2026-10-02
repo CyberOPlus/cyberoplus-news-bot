@@ -255,11 +255,18 @@ def validate_soft_caption_cleanup() -> None:
 
 
 def validate_original_technical_terms_policy() -> None:
-    from ai_rewriter import isolate_latin_runs_rtl
+    from ai_rewriter import _restore_source_terms, isolate_latin_runs_rtl
 
     bidi = isolate_latin_runs_rtl("خلل use‑after‑free داخل kernel")
     if "use-after-free" not in bidi:
         raise RuntimeError("Latin technical hyphen normalization regressed.")
+
+    restored = _restore_source_terms(
+        "New jailbreak for PS5 and PS5 Pro.",
+        "جايكربوت جديد لأجهزة بلايستيشن 5.",
+    )
+    if "jailbreak" not in restored or "PS5" not in restored or "جايكربوت" in restored:
+        raise RuntimeError("Original technical-term restoration regressed.")
 
 
 def validate_no_false_attack_claims() -> None:
