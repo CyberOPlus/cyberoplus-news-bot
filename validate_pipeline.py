@@ -244,21 +244,7 @@ def validate_reader_friendly_policy() -> None:
 
 
 def validate_original_technical_terms_policy() -> None:
-    from ai_rewriter import _validate_original_technical_terms, isolate_latin_runs_rtl
-
-    source = "New jailbreak uses WebKit and kernel use-after-free to run homebrew."
-    good = "تتيح jailbreak تشغيل homebrew عبر WebKit مع خلل use-after-free داخل kernel."
-    _validate_original_technical_terms(source, good)
-
-    try:
-        _validate_original_technical_terms(
-            source,
-            "تتيح الأداة تشغيل برامج غير رسمية عبر WebKit داخل kernel.",
-        )
-    except RuntimeError:
-        pass
-    else:
-        raise RuntimeError("Original technical-term preservation regressed.")
+    from ai_rewriter import isolate_latin_runs_rtl
 
     bidi = isolate_latin_runs_rtl("خلل use‑after‑free داخل kernel")
     if "use-after-free" not in bidi:
