@@ -13,6 +13,7 @@ from ai_rewriter import (
     _strict_entity_tokens,
     _unwrap_latin_parentheses,
     _validate_fact_fidelity,
+    _validate_reader_friendly_copy,
 )
 from image_resolver import build_branded_fallback_asset
 from facebook_publisher import MIN_GAP, TIMING, build_delivery_message, queue_priority_key
@@ -181,6 +182,36 @@ def validate_facebook_delivery_policy() -> None:
         )
 
 
+def validate_reader_friendly_policy() -> None:
+    _validate_reader_friendly_copy(
+        "أداة جديدة توسع قدرات PS5 على الإصدارات من 7.00 إلى 13.60",
+        "تسمح الأداة بتشغيل برامج غير رسمية، ثم تستخدم خللاً في متصفح الجهاز للوصول إلى صلاحيات أعمق داخل النظام.",
+    )
+
+    bad_cases = (
+        (
+            "ثغرة WebKit جديدة في PS5",
+            "يمكن استغلالها عبر المتصفح.",
+        ),
+        (
+            "أداة جديدة لأجهزة PS5",
+            "تم الكشف عن جايبريك جديد للأجهزة.",
+        ),
+        (
+            "تحديث جديد لأجهزة PS5",
+            "هذه التقنية قد تفتح الباب أمام مزيد من الاستخدامات مستقبلاً.",
+        ),
+    )
+    for title, body in bad_cases:
+        try:
+            _validate_reader_friendly_copy(title, body)
+        except RuntimeError:
+            continue
+        raise RuntimeError(
+            f"Reader-friendly policy accepted unsuitable Facebook copy: {title}"
+        )
+
+
 def validate_story_dedupe() -> None:
     first = annotate_story({
         "telegram_id": 1680,
@@ -313,6 +344,7 @@ def main() -> int:
     validate_ai_layout_policy()
     validate_visible_copy_ownership()
     validate_facebook_delivery_policy()
+    validate_reader_friendly_policy()
     validate_story_dedupe()
     validate_entity_policy()
     validate_video_rights_policy()
@@ -327,6 +359,7 @@ def main() -> int:
         "ai_layout_policy": "ok",
         "visible_copy_ai_ownership": "ok",
         "facebook_delivery_policy": "ok",
+        "reader_friendly_policy": "ok",
         "semantic_story_dedupe": "ok",
         "entity_policy": "ok",
         "video_rights_policy": "ok",
