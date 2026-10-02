@@ -1,8 +1,8 @@
 {
-  "version": 3,
+  "version": 4,
   "platform": "Facebook",
   "phase": "facebook_native_newsroom",
-  "note": "Facebook-native newsroom policy: publish fresh news promptly without burst flooding. Threads timing data is never used for Facebook scheduling.",
+  "note": "Near-continuous Facebook newsroom policy: poll Telegram every 5 minutes, publish fresh news promptly, and drain bursts with a short 5-minute Facebook gap instead of flooding.",
   "language": {
     "primary": "ar",
     "style": "clear_modern_standard_arabic",
@@ -14,9 +14,9 @@
     "publish_every_collected_item": true,
     "skip_items": false,
     "publish_as_soon_as_ready": true,
-    "minimum_gap_minutes": 12,
+    "minimum_gap_minutes": 5,
     "max_posts_per_publisher_attempt": 1,
-    "queue_mode": "priority_one_per_attempt",
+    "queue_mode": "priority_one_per_5_minute_slot",
     "aging_boost_after_hours": 6,
     "priority_order": [
       "breaking",
@@ -25,7 +25,9 @@
       "security",
       "freshness"
     ],
-    "never_delay_for_threads_peak_times": true
+    "never_delay_for_threads_peak_times": true,
+    "continuous_poll_minutes": 5,
+    "backlog_drain_gap_minutes": 5
   },
   "source_policy": {
     "remove_intcyberdigest_branding": true,
