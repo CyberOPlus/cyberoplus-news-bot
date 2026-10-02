@@ -1036,6 +1036,18 @@ def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
             + fidelity_retry_hint
         )
 
+    reader_retry_hint = str(item.get("_reader_retry_hint") or "").strip()
+    if reader_retry_hint:
+        user_text += (
+            "\n\nإعادة تحرير إلزامية للقارئ العام: المحاولة السابقة كانت دقيقة "
+            "لكنها لم تكن سهلة بما يكفي لقارئ عربي غير متخصص. أعد كتابة title "
+            "وfacebook_post وcard_title من جديد مع الحفاظ على جميع الحقائق المهمة. "
+            "ابدأ بالأثر أو التغيير الذي يفهمه المستخدم، وأجّل المصطلحات التقنية "
+            "إلى التفاصيل. لا تخترع تعريباً صوتياً ولا تضف خاتمة تحليلية أو وصف "
+            "هجوم/اختراق غير موجود في المصدر. سبب الرفض السابق: "
+            + reader_retry_hint
+        )
+
     return instructions, user_text
 
 def _finalize(
@@ -1247,6 +1259,12 @@ def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "AI omitted CVE identifiers from source",
         "AI output is too short and may have dropped source facts",
     )
+    reader_markers = (
+        "AI used an invented Arabic transliteration",
+        "Facebook title contains too much unexplained technical jargon",
+        "Card title contains too much unexplained technical jargon",
+        "AI added a generic editorial conclusion",
+    )
 
     for label, call in attempts:
         try:
@@ -1287,6 +1305,26 @@ def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
                     first_error += f" | repair: {repair_exc}"
                 finally:
                     item.pop("_fidelity_retry_hint", None)
+
+            elif any(marker in first_error for marker in reader_markers):
+                item["_reader_retry_hint"] = first_error
+                try:
+                    model, result = call()
+                    print(
+                        json.dumps(
+                            {
+                                "ai_provider_selected": model,
+                                "reader_repair": True,
+                                "fallback_failures_before_success": len(errors),
+                            },
+                            ensure_ascii=False,
+                        )
+                    )
+                    return model, result
+                except Exception as repair_exc:
+                    first_error += f" | reader_repair: {repair_exc}"
+                finally:
+                    item.pop("_reader_retry_hint", None)
 
             errors.append(f"{label}: {first_error}")
             print(
