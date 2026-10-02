@@ -121,6 +121,8 @@ def validate_visible_copy_ownership() -> None:
         source_text="BREAKING: شركة مثال أطلقت تحديثاً جديداً وأصبح متاحاً للمستخدمين الآن.",
     )
     visible = str(result.get("facebook_post") or "")
+    if str(result.get("title") or ""):
+        raise RuntimeError("Legacy Facebook title was not cleared by source policy.")
     if "عاجل" in visible or "تحذير" in visible or "❗" in visible:
         raise RuntimeError("Code injected an editorial attention label into AI copy.")
     if str(result.get("card_title") or "").startswith(("عاجل", "تحذير", "مهم")):
@@ -131,8 +133,8 @@ def validate_facebook_delivery_policy() -> None:
     security_item = {
         "telegram_id": 5001,
         "source_published_at": "2026-10-02T10:00:00+00:00",
-        "title": "ثغرة جديدة في منتج Example تُستغل ضد المستخدمين",
-        "facebook_post": "أكدت الجهة المطورة أن التحقيق مستمر وأن التحديث الأمني متاح الآن.",
+        "title": "THIS TITLE MUST NEVER BE DISPLAYED",
+        "facebook_post": "ثغرة جديدة في منتج Example تُستغل ضد المستخدمين. أكدت الجهة المطورة أن التحقيق مستمر وأن التحديث الأمني متاح الآن.",
         "card_title": "ثغرة في Example تُستغل ضد المستخدمين",
         "editorial": {
             "content_type": "vulnerability",
@@ -144,7 +146,9 @@ def validate_facebook_delivery_policy() -> None:
     message = build_delivery_message(security_item)
     plain_message = message.replace("\u2067", "").replace("\u2069", "")
     if not plain_message.startswith("⚠️ "):
-        raise RuntimeError("Warning emoji was not applied at the RTL headline start.")
+        raise RuntimeError("Warning emoji was not applied at the RTL body start.")
+    if "THIS TITLE MUST NEVER BE DISPLAYED" in plain_message:
+        raise RuntimeError("Facebook renderer displayed the legacy title.")
     if "تحذير:" in plain_message or "عاجل:" in plain_message or "مهم:" in plain_message:
         raise RuntimeError("Text attention labels leaked into Facebook delivery.")
     if "#الأمن_السيبراني" not in message or "#CyberoPlus" not in message:
@@ -157,8 +161,8 @@ def validate_facebook_delivery_policy() -> None:
     ai_item = {
         "telegram_id": 5002,
         "source_published_at": "2026-10-02T10:01:00+00:00",
-        "title": "OpenAI تطلق تحديثاً جديداً لأدوات الذكاء الاصطناعي",
-        "facebook_post": "يتوفر التحديث تدريجياً للمستخدمين.",
+        "title": "LEGACY TITLE",
+        "facebook_post": "OpenAI تطلق تحديثاً جديداً لأدوات الذكاء الاصطناعي، ويتوفر تدريجياً للمستخدمين.",
         "card_title": "OpenAI تطلق تحديثاً جديداً",
         "editorial": {
             "content_type": "product_update",
@@ -438,7 +442,7 @@ def main() -> int:
         "numeric_fidelity_regression": "ok",
         "ai_layout_policy": "ok",
         "visible_copy_ai_ownership": "ok",
-        "facebook_delivery_policy": "ok",
+        "facebook_delivery_body_only": "ok",
         "reader_friendly_policy": "ok",
         "soft_caption_cleanup": "ok",
         "original_technical_terms": "ok",
