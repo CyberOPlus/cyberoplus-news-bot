@@ -696,6 +696,34 @@ def _remove_exact_title_repeat(title: str, body: str) -> str:
     return body
 
 
+def _opening_words(text: str, limit: int = 3) -> list[str]:
+    value = re.sub(
+        r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]",
+        "",
+        str(text or ""),
+    )
+    value = re.sub(r"[^\w\u0600-\u06FF]+", " ", value, flags=re.UNICODE)
+    words = [word.casefold() for word in value.split() if word]
+    return words[:limit]
+
+
+def _repeats_headline_opening(title: str, body: str) -> bool:
+    """Catch obvious headline/body restarts such as 'أداة جديدة...' twice."""
+    first_paragraph = next(
+        (part.strip() for part in re.split(r"\n\s*\n", str(body or "")) if part.strip()),
+        "",
+    )
+    title_words = _opening_words(title, 3)
+    body_words = _opening_words(first_paragraph, 3)
+    if len(title_words) >= 2 and len(body_words) >= 2:
+        if title_words[:2] == body_words[:2]:
+            return True
+    if len(title_words) >= 3 and len(body_words) >= 3:
+        if title_words[:3] == body_words[:3]:
+            return True
+    return False
+
+
 def _validate_reader_friendly_copy(title: str, body: str) -> None:
     """Reject copy that is accurate but unnecessarily hard for a general reader."""
     clean_title = re.sub(
@@ -713,6 +741,11 @@ def _validate_reader_friendly_copy(title: str, body: str) -> None:
     if DISALLOWED_TECH_TRANSLITERATION_RE.search(visible):
         raise RuntimeError(
             "AI used an invented Arabic transliteration for a technical term."
+        )
+
+    if _repeats_headline_opening(clean_title, clean_body):
+        raise RuntimeError(
+            "Facebook body repeats the headline opening instead of continuing with a new fact."
         )
 
     if len(TITLE_JARGON_RE.findall(clean_title)) > 1:
@@ -1271,6 +1304,7 @@ def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     )
     reader_markers = (
         "AI used an invented Arabic transliteration",
+        "Facebook body repeats the headline opening instead of continuing with a new fact",
         "Facebook title contains too much unexplained technical jargon",
         "Facebook first paragraph introduces technical jargon before the reader understands the news",
         "Card title contains too much unexplained technical jargon",
