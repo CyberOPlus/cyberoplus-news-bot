@@ -2,3 +2,4 @@ validate-video-rights-long-video-v2
 clean rtl caption validation v6
 clean rtl caption validation v7
 clean rtl caption validation v8
+clean rtl caption validation v9
