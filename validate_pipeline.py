@@ -15,6 +15,7 @@ from ai_rewriter import (
     _validate_fact_fidelity,
 )
 from image_resolver import build_branded_fallback_asset
+from facebook_publisher import MIN_GAP, TIMING, build_delivery_message, queue_priority_key
 from merge_pipeline_state import merge_ai_state, merge_rows, merge_state, tid_key
 from video_processor import _processing_timeout
 from video_rights import evaluate_video_rights
@@ -118,6 +119,63 @@ def validate_visible_copy_ownership() -> None:
         raise RuntimeError("Code injected an editorial attention label into AI copy.")
     if str(result.get("card_title") or "").startswith(("عاجل", "تحذير", "مهم")):
         raise RuntimeError("Code injected an attention prefix into AI card title.")
+
+
+def validate_facebook_delivery_policy() -> None:
+    security_item = {
+        "telegram_id": 5001,
+        "source_published_at": "2026-10-02T10:00:00+00:00",
+        "title": "ثغرة جديدة في منتج Example تُستغل ضد المستخدمين",
+        "facebook_post": "أكدت الجهة المطورة أن التحقيق مستمر وأن التحديث الأمني متاح الآن.",
+        "card_title": "ثغرة في Example تُستغل ضد المستخدمين",
+        "editorial": {
+            "content_type": "vulnerability",
+            "attention_label": "warning",
+            "certainty": "confirmed",
+            "main_fact": "ثغرة في Example تُستغل ضد المستخدمين.",
+        },
+    }
+    message = build_delivery_message(security_item)
+    if not message.startswith("⚠️ تحذير:"):
+        raise RuntimeError("Warning delivery marker was not applied deterministically.")
+    if "#الأمن_السيبراني" not in message or "#CyberoPlus" not in message:
+        raise RuntimeError("Expected Cybero Plus/topic hashtags are missing.")
+    if message.count("#") > 2:
+        raise RuntimeError("Delivery renderer exceeded the two-hashtag limit.")
+    if "http://" in message or "https://" in message:
+        raise RuntimeError("External URL leaked into the Facebook body.")
+
+    ai_item = {
+        "telegram_id": 5002,
+        "source_published_at": "2026-10-02T10:01:00+00:00",
+        "title": "OpenAI تطلق تحديثاً جديداً لأدوات الذكاء الاصطناعي",
+        "facebook_post": "يتوفر التحديث تدريجياً للمستخدمين.",
+        "card_title": "OpenAI تطلق تحديثاً جديداً",
+        "editorial": {
+            "content_type": "product_update",
+            "attention_label": "none",
+            "certainty": "confirmed",
+            "main_fact": "OpenAI تطلق تحديثاً جديداً.",
+        },
+    }
+    ai_message = build_delivery_message(ai_item)
+    if "#الذكاء_الاصطناعي" not in ai_message:
+        raise RuntimeError("AI topic hashtag classification regressed.")
+
+    breaking = dict(ai_item)
+    breaking["telegram_id"] = 6001
+    breaking["editorial"] = dict(ai_item["editorial"], attention_label="breaking", content_type="breaking_news")
+    normal = dict(ai_item)
+    normal["telegram_id"] = 6002
+    normal["editorial"] = dict(ai_item["editorial"], attention_label="none", content_type="general")
+    if not queue_priority_key(breaking) < queue_priority_key(normal):
+        raise RuntimeError("Breaking news no longer outranks normal queue items.")
+
+    configured = int((TIMING.get("publishing_policy") or {}).get("minimum_gap_minutes", 0) or 0)
+    if configured < 10 or MIN_GAP != configured:
+        raise RuntimeError(
+            f"Facebook pacing is unsafe or diverged from config: configured={configured}, active={MIN_GAP}"
+        )
 
 
 def validate_story_dedupe() -> None:
@@ -251,6 +309,7 @@ def main() -> int:
     validate_numeric_fidelity()
     validate_ai_layout_policy()
     validate_visible_copy_ownership()
+    validate_facebook_delivery_policy()
     validate_story_dedupe()
     validate_entity_policy()
     validate_video_rights_policy()
@@ -264,6 +323,7 @@ def main() -> int:
         "numeric_fidelity_regression": "ok",
         "ai_layout_policy": "ok",
         "visible_copy_ai_ownership": "ok",
+        "facebook_delivery_policy": "ok",
         "semantic_story_dedupe": "ok",
         "entity_policy": "ok",
         "video_rights_policy": "ok",
