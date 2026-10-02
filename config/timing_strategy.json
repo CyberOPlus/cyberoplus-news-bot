@@ -1,8 +1,8 @@
 {
-  "version": 2,
+  "version": 3,
   "platform": "Facebook",
-  "phase": "bootstrap",
-  "note": "No reliable Facebook audience timing dataset has been supplied yet. Threads data must not be used to schedule Facebook posts.",
+  "phase": "facebook_native_newsroom",
+  "note": "Facebook-native newsroom policy: publish fresh news promptly without burst flooding. Threads timing data is never used for Facebook scheduling.",
   "language": {
     "primary": "ar",
     "style": "clear_modern_standard_arabic",
@@ -15,6 +15,16 @@
     "skip_items": false,
     "publish_as_soon_as_ready": true,
     "minimum_gap_minutes": 12,
+    "max_posts_per_publisher_attempt": 1,
+    "queue_mode": "priority_one_per_attempt",
+    "aging_boost_after_hours": 6,
+    "priority_order": [
+      "breaking",
+      "warning",
+      "important",
+      "security",
+      "freshness"
+    ],
     "never_delay_for_threads_peak_times": true
   },
   "source_policy": {
@@ -25,10 +35,14 @@
     "facebook_first_comment_source_link": true
   },
   "learning_policy": {
-    "status": "waiting_for_meta_connection",
+    "status": "instrument_delivery_now_collect_meta_metrics_when_permissions_allow",
     "collect_post_level_metrics_when_available": true,
-    "measure_after_hours": [2, 24, 72],
-    "recalculate_after_minimum_posts": 30,
+    "measure_after_hours": [
+      2,
+      24,
+      72
+    ],
+    "recalculate_after_minimum_posts": 50,
     "metrics": [
       "reach",
       "views",
@@ -36,9 +50,34 @@
       "reactions",
       "comments",
       "shares",
+      "video_watch_time",
       "followers_gained",
       "qualified_views",
       "earnings_if_available"
+    ],
+    "dimensions": [
+      "content_type",
+      "attention_label",
+      "media_mode",
+      "caption_length",
+      "paragraph_count",
+      "emoji",
+      "hashtags",
+      "publish_hour",
+      "source_age_minutes"
     ]
+  },
+  "caption_policy": {
+    "brand_hashtag": "#CyberoPlus",
+    "max_hashtags": 2,
+    "add_topic_hashtag": true,
+    "topic_hashtags": {
+      "cybersecurity": "#الأمن_السيبراني",
+      "artificial_intelligence": "#الذكاء_الاصطناعي",
+      "privacy": "#الخصوصية",
+      "technology": "#تقنية"
+    },
+    "emoji_policy": "deterministic_from_verified_attention_and_content_type",
+    "source_link_location": "first_comment"
   }
 }
