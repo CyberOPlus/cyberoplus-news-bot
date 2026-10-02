@@ -166,7 +166,7 @@ ATTENTION_PREFIX_RE = re.compile(
     r"\s*[:：\-–—]?\s*"
 )
 DISALLOWED_TECH_TRANSLITERATION_RE = re.compile(
-    r"(?:جايبريك|جايكربريك|جيلبريك|جيك\s*بريك|جيل\s*بريك)",
+    r"\bج[اأإآ]?ي?[كل]?\s*بريك\b",
     flags=re.I,
 )
 TITLE_JARGON_RE = re.compile(
@@ -714,9 +714,9 @@ def _validate_reader_friendly_copy(title: str, body: str) -> None:
             "AI used an invented Arabic transliteration for a technical term."
         )
 
-    if TITLE_JARGON_RE.search(clean_title):
+    if len(TITLE_JARGON_RE.findall(clean_title)) > 1:
         raise RuntimeError(
-            "Facebook title starts too technical for a general Arabic reader."
+            "Facebook title contains too much unexplained technical jargon."
         )
 
     if GENERIC_EDITORIAL_CONCLUSION_RE.search(clean_body):
@@ -942,8 +942,8 @@ def enforce_source_policy(
     card_title = re.sub(r"\s+", " ", card_title)
     if DISALLOWED_TECH_TRANSLITERATION_RE.search(card_title):
         raise RuntimeError("AI used an invented Arabic transliteration in card title.")
-    if TITLE_JARGON_RE.search(card_title):
-        raise RuntimeError("Card title is too technical for a general Arabic reader.")
+    if len(TITLE_JARGON_RE.findall(card_title)) > 1:
+        raise RuntimeError("Card title contains too much unexplained technical jargon.")
     words = [word for word in card_title.split() if word]
     if len(words) > 11:
         card_title = " ".join(words[:11]).rstrip("،,:;؛.!?؟")
