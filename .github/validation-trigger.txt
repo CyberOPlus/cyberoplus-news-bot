@@ -3,3 +3,4 @@ simple-reader validation
 simple-reader terminology validation
 simple-reader final validation
 reader-friendly code validation
+reader-friendly generalized guard validation
