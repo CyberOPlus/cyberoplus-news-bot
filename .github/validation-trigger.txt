@@ -1,2 +1,1 @@
 validate-video-rights-long-video-v2
-continuous-fast-news validation
