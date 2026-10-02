@@ -106,7 +106,7 @@ def validate_visible_copy_ownership() -> None:
         "protected_entities": [],
         "protected_numbers": [],
         "title": "",
-        "facebook_post": "شركة مثال أطلقت تحديثاً جديداً.",
+        "facebook_post": "أصبح التحديث متاحاً للمستخدمين الآن.",
         "first_comment": "",
         "language": "ar",
         "source_url": "",
@@ -116,7 +116,7 @@ def validate_visible_copy_ownership() -> None:
     result = enforce_source_policy(
         generated,
         [],
-        source_text="BREAKING: شركة مثال أطلقت تحديثاً جديداً.",
+        source_text="BREAKING: شركة مثال أطلقت تحديثاً جديداً وأصبح التحديث متاحاً للمستخدمين الآن.",
     )
     visible = str(result.get("facebook_post") or "")
     if "عاجل" in visible or "تحذير" in visible or "❗" in visible:
