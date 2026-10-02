@@ -9,6 +9,8 @@ from pathlib import Path
 
 from ai_rewriter import (
     _preserve_ai_facebook_layout,
+    _dedupe_lead_object,
+    _strip_generic_editorial_conclusion,
     enforce_source_policy,
     _strict_entity_tokens,
     _unwrap_latin_parentheses,
@@ -201,36 +203,12 @@ def validate_reader_friendly_policy() -> None:
             "تم الكشف عن جايبريك جديد للأجهزة.",
         ),
         (
-            "أداة جديدة تفتح جميع إصدارات PS5",
-            "أداة جديدة تتيح تشغيل برامج غير رسمية على الجهاز.",
-        ),
-        (
-            "إطلاق أداة جديدة لأجهزة PS5",
-            "تتيح الأداة الجديدة تشغيل برامج غير رسمية على الجهاز.",
-        ),
-        (
-            "أداة كسر حماية جديدة لأجهزة PS5",
-            "تمكّن أداة كسر الحماية المستخدم من تشغيل برامج غير رسمية.",
-        ),
-        (
             "أداة جديدة لأجهزة PS5",
             "تم الكشف عن جايكربريك جديد للأجهزة.",
         ),
         (
             "أداة جديدة لأجهزة PS5",
             "تم الكشف عن جايكبريك جديد للأجهزة.",
-        ),
-        (
-            "أداة جديدة لأجهزة PS5",
-            "تسمح الأداة بتشغيل برامج homebrew عبر WebKit مباشرة على الجهاز.",
-        ),
-        (
-            "تحديث جديد لأجهزة PS5",
-            "هذه التقنية قد تفتح الباب أمام مزيد من الاستخدامات مستقبلاً.",
-        ),
-        (
-            "تحديث جديد لأجهزة PS5",
-            "هذا التطور يفتح باباً لتشغيل تطبيقات غير مدعومة رسمياً.",
         ),
     )
     for title, body in bad_cases:
@@ -241,6 +219,28 @@ def validate_reader_friendly_policy() -> None:
         raise RuntimeError(
             f"Reader-friendly policy accepted unsuitable Facebook copy: {title}"
         )
+
+
+def validate_soft_caption_cleanup() -> None:
+    cleaned = _dedupe_lead_object(
+        "أداة جديدة تفتح جميع إصدارات PS5",
+        "تتيح الأداة الجديدة تشغيل برامج غير رسمية على الجهاز.\n\nتفاصيل إضافية.",
+    )
+    if not cleaned.startswith("تتيح تشغيل"):
+        raise RuntimeError("Lead-object deduplication regressed.")
+
+    cleaned2 = _dedupe_lead_object(
+        "أداة كسر حماية جديدة لأجهزة PS5",
+        "تمكّن أداة كسر الحماية التي أُطلقت مؤخراً من تشغيل برامج غير رسمية.",
+    )
+    if not cleaned2.startswith("تتيح تشغيل"):
+        raise RuntimeError("Extended tool lead deduplication regressed.")
+
+    stripped = _strip_generic_editorial_conclusion(
+        "هذه هي التفاصيل المؤكدة.\n\nهذا التطور يفتح باباً لاستخدامات جديدة."
+    )
+    if "يفتح باب" in stripped:
+        raise RuntimeError("Generic editorial conclusion cleanup regressed.")
 
 
 def validate_original_technical_terms_policy() -> None:
@@ -415,6 +415,7 @@ def main() -> int:
     validate_visible_copy_ownership()
     validate_facebook_delivery_policy()
     validate_reader_friendly_policy()
+    validate_soft_caption_cleanup()
     validate_original_technical_terms_policy()
     validate_no_false_attack_claims()
     validate_story_dedupe()
@@ -432,6 +433,7 @@ def main() -> int:
         "visible_copy_ai_ownership": "ok",
         "facebook_delivery_policy": "ok",
         "reader_friendly_policy": "ok",
+        "soft_caption_cleanup": "ok",
         "original_technical_terms": "ok",
         "no_false_attack_claims": "ok",
         "semantic_story_dedupe": "ok",
