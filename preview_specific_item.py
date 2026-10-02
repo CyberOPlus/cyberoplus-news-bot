@@ -10,6 +10,7 @@ from typing import Any
 
 from ai_batch_processor import enrich_reply_context, read_jsonl
 from ai_rewriter import call_gemini, normalize_item
+from facebook_publisher import build_delivery_message
 
 
 ROOT = Path(__file__).resolve().parent
@@ -31,14 +32,32 @@ def main() -> int:
     item = normalize_item(enriched)
     model, result = call_gemini(item)
 
+    delivery_item = {
+        "telegram_id": telegram_id,
+        "source_published_at": item.get("published_at"),
+        "title": result.get("title") or "",
+        "facebook_post": result.get("facebook_post") or "",
+        "card_title": result.get("card_title") or "",
+        "editorial": {
+            "content_type": result.get("content_type") or "general",
+            "attention_label": result.get("attention_label") or "none",
+            "certainty": result.get("certainty") or "confirmed",
+            "main_fact": result.get("main_fact") or "",
+        },
+    }
+
     payload: dict[str, Any] = {
         "preview_only": True,
         "facebook_called": False,
         "telegram_id": telegram_id,
         "model": model,
+        "title": result.get("title") or "",
         "facebook_post": result.get("facebook_post") or "",
+        "delivery_message": build_delivery_message(delivery_item),
         "first_comment": result.get("first_comment") or "",
         "card_title": result.get("card_title") or "",
+        "content_type": result.get("content_type") or "general",
+        "attention_label": result.get("attention_label") or "none",
         "protected_numbers": result.get("protected_numbers") or [],
         "protected_entities": result.get("protected_entities") or [],
     }
