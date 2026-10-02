@@ -209,6 +209,10 @@ def validate_reader_friendly_policy() -> None:
             "تتيح الأداة الجديدة تشغيل برامج غير رسمية على الجهاز.",
         ),
         (
+            "أداة كسر حماية جديدة لأجهزة PS5",
+            "تمكّن أداة كسر الحماية المستخدم من تشغيل برامج غير رسمية.",
+        ),
+        (
             "أداة جديدة لأجهزة PS5",
             "تم الكشف عن جايكربريك جديد للأجهزة.",
         ),
@@ -237,6 +241,28 @@ def validate_reader_friendly_policy() -> None:
         raise RuntimeError(
             f"Reader-friendly policy accepted unsuitable Facebook copy: {title}"
         )
+
+
+def validate_original_technical_terms_policy() -> None:
+    from ai_rewriter import _validate_original_technical_terms, isolate_latin_runs_rtl
+
+    source = "New jailbreak uses WebKit and kernel use-after-free to run homebrew."
+    good = "تتيح jailbreak تشغيل homebrew عبر WebKit مع خلل use-after-free داخل kernel."
+    _validate_original_technical_terms(source, good)
+
+    try:
+        _validate_original_technical_terms(
+            source,
+            "تتيح الأداة تشغيل برامج غير رسمية عبر WebKit داخل kernel.",
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError("Original technical-term preservation regressed.")
+
+    bidi = isolate_latin_runs_rtl("خلل use‑after‑free داخل kernel")
+    if "use-after-free" not in bidi:
+        raise RuntimeError("Latin technical hyphen normalization regressed.")
 
 
 def validate_no_false_attack_claims() -> None:
@@ -403,6 +429,7 @@ def main() -> int:
     validate_visible_copy_ownership()
     validate_facebook_delivery_policy()
     validate_reader_friendly_policy()
+    validate_original_technical_terms_policy()
     validate_no_false_attack_claims()
     validate_story_dedupe()
     validate_entity_policy()
@@ -419,6 +446,7 @@ def main() -> int:
         "visible_copy_ai_ownership": "ok",
         "facebook_delivery_policy": "ok",
         "reader_friendly_policy": "ok",
+        "original_technical_terms": "ok",
         "no_false_attack_claims": "ok",
         "semantic_story_dedupe": "ok",
         "entity_policy": "ok",
