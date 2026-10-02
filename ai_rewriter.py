@@ -762,6 +762,30 @@ ORIGINAL_TECH_TERMS = (
 )
 
 
+def _restore_source_terms(source_text: str, output_text: str) -> str:
+    """Prefer source-native technical identifiers without blocking publication."""
+    source = _normalized_tech_text(source_text)
+    value = str(output_text or "")
+
+    if "jailbreak" in source:
+        value = re.sub(
+            r"(?:جايكربوت|جايكبريك|جايكربريك|جايبريك|جيلبريك|جيك\s*بريك|جيل\s*بريك|جاي\s*بريك)",
+            "jailbreak",
+            value,
+            flags=re.I,
+        )
+        if "jailbreak" not in _normalized_tech_text(value):
+            value = re.sub(r"كسر\s+الحماية", "jailbreak", value, count=1)
+
+    if re.search(r"(?i)\bPS5\b", str(source_text or "")):
+        value = re.sub(r"بلايستيشن\s*5", "PS5", value, flags=re.I)
+
+    if re.search(r"(?i)\bPS5\s+Pro\b", str(source_text or "")):
+        value = re.sub(r"بلايستيشن\s*5\s*Pro", "PS5 Pro", value, flags=re.I)
+
+    return value
+
+
 def _normalized_tech_text(text: str) -> str:
     value = re.sub(
         r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]",
@@ -1069,6 +1093,7 @@ def enforce_source_policy(
             body = body.replace(str(url), "")
 
     body = _clean_publisher_owned_tokens(body)
+    body = _restore_source_terms(source_text, body)
     body = _unwrap_latin_parentheses(body)
     body = _preserve_ai_facebook_layout(body)
     body = _strip_generic_editorial_conclusion(body)
@@ -1091,6 +1116,7 @@ def enforce_source_policy(
     result["facebook_post"] = force_rtl_paragraphs(body) if body else ""
 
     card_title = str(result.get("card_title") or "").strip()
+    card_title = _restore_source_terms(source_text, card_title)
     card_title = _unwrap_latin_parentheses(card_title)
     card_title = re.sub(r"\s+", " ", card_title)
     if DISALLOWED_TECH_TRANSLITERATION_RE.search(card_title):
