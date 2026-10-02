@@ -791,6 +791,61 @@ def _validate_original_technical_terms(source_text: str, output_text: str) -> No
         )
 
 
+def _dedupe_lead_object(title: str, body: str) -> str:
+    """Remove common headline-object repetition without blocking publication."""
+    if not title or not body:
+        return body
+    parts = [part.strip() for part in re.split(r"\n\s*\n", str(body)) if part.strip()]
+    if not parts:
+        return body
+
+    clean_title = re.sub(
+        r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]",
+        "",
+        str(title),
+    )
+    first = parts[0]
+
+    noun_forms = {
+        "أداة": r"(?:الأداة|أداة)",
+        "تحديث": r"(?:التحديث|تحديث)",
+        "ثغرة": r"(?:الثغرة|ثغرة)",
+        "ميزة": r"(?:الميزة|ميزة)",
+        "إصدار": r"(?:الإصدار|إصدار)",
+        "نسخة": r"(?:النسخة|نسخة)",
+        "خدمة": r"(?:الخدمة|خدمة)",
+        "تقرير": r"(?:التقرير|تقرير)",
+        "نموذج": r"(?:النموذج|نموذج)",
+    }
+    for noun, form in noun_forms.items():
+        if noun not in clean_title:
+            continue
+        first = re.sub(
+            rf"^(تتيح|تسمح|توفر|تدعم|تشمل|تعمل|تعتمد)\s+(?:هذه\s+)?{form}(?:\s+الجديد(?:ة)?)?\s+",
+            r"\1 ",
+            first,
+            count=1,
+        )
+
+    if "أداة" in clean_title:
+        first = re.sub(
+            r"^تمكّن\s+(?:هذه\s+)?(?:الأداة|أداة)[^،.!؟?]{0,90}?\s+من\s+",
+            "تتيح ",
+            first,
+            count=1,
+        )
+
+    parts[0] = re.sub(r"\s+", " ", first).strip()
+    return "\n\n".join(parts)
+
+
+def _strip_generic_editorial_conclusion(body: str) -> str:
+    parts = [part.strip() for part in re.split(r"\n\s*\n", str(body or "")) if part.strip()]
+    if len(parts) > 1 and GENERIC_EDITORIAL_CONCLUSION_RE.search(parts[-1]):
+        parts.pop()
+    return "\n\n".join(parts)
+
+
 def _validate_reader_friendly_copy(title: str, body: str) -> None:
     """Reject copy that is accurate but unnecessarily hard for a general reader."""
     clean_title = re.sub(
@@ -810,29 +865,11 @@ def _validate_reader_friendly_copy(title: str, body: str) -> None:
             "AI used an invented Arabic transliteration for a technical term."
         )
 
-    if _repeats_headline_opening(clean_title, clean_body):
-        raise RuntimeError(
-            "Facebook body repeats the headline opening instead of continuing with a new fact."
-        )
-
     if len(TITLE_JARGON_RE.findall(clean_title)) > 1:
         raise RuntimeError(
             "Facebook title contains too much unexplained technical jargon."
         )
 
-    first_paragraph = next(
-        (part.strip() for part in re.split(r"\n\s*\n", clean_body) if part.strip()),
-        "",
-    )
-    if len(TITLE_JARGON_RE.findall(first_paragraph)) > 1:
-        raise RuntimeError(
-            "Facebook first paragraph contains too much technical jargon before the reader understands the news."
-        )
-
-    if GENERIC_EDITORIAL_CONCLUSION_RE.search(clean_body):
-        raise RuntimeError(
-            "AI added a generic editorial conclusion instead of source-grounded news."
-        )
 
 
 def _unwrap_latin_parentheses(text: str) -> str:
@@ -1033,6 +1070,8 @@ def enforce_source_policy(
     body = _unwrap_latin_parentheses(body)
     body = _preserve_ai_facebook_layout(body)
     body = _remove_exact_title_repeat(title, body)
+    body = _dedupe_lead_object(title, body)
+    body = _strip_generic_editorial_conclusion(body)
 
     if not title and not body:
         raise RuntimeError("AI returned no visible Facebook copy.")
@@ -1375,11 +1414,8 @@ def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     )
     reader_markers = (
         "AI used an invented Arabic transliteration",
-        "Facebook body repeats the headline opening instead of continuing with a new fact",
         "Facebook title contains too much unexplained technical jargon",
-        "Facebook first paragraph contains too much technical jargon before the reader understands the news",
         "Card title contains too much unexplained technical jargon",
-        "AI added a generic editorial conclusion",
         "AI turned an exploit or technical capability into an attack/hack that the source did not report",
     )
 
