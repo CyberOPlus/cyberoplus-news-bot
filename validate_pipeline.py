@@ -235,6 +235,37 @@ def validate_reader_friendly_policy() -> None:
         )
 
 
+def validate_no_false_attack_claims() -> None:
+    generated = {
+        "content_type": "tool",
+        "attention_label": "breaking",
+        "attention_evidence": "source_explicit_breaking",
+        "certainty": "confirmed",
+        "main_fact": "أداة جديدة تعمل على PS5.",
+        "supporting_facts": [],
+        "protected_entities": ["PS5"],
+        "protected_numbers": ["7.00", "13.60"],
+        "title": "يمكن اختراق PS5 عبر موقع ويب",
+        "facebook_post": "تعمل الأداة على الإصدارات من 7.00 إلى 13.60.",
+        "first_comment": "",
+        "language": "ar",
+        "source_url": "",
+        "card_title": "أداة جديدة لأجهزة PS5",
+        "link_role": "none",
+    }
+    try:
+        enforce_source_policy(
+            generated,
+            [],
+            source_text="BREAKING: New jailbreak tool supports PS5 firmware 7.00 through 13.60.",
+        )
+    except RuntimeError as exc:
+        if "attack/hack" in str(exc):
+            return
+        raise
+    raise RuntimeError("False attack/hack wording was not rejected.")
+
+
 def validate_story_dedupe() -> None:
     first = annotate_story({
         "telegram_id": 1680,
@@ -368,6 +399,7 @@ def main() -> int:
     validate_visible_copy_ownership()
     validate_facebook_delivery_policy()
     validate_reader_friendly_policy()
+    validate_no_false_attack_claims()
     validate_story_dedupe()
     validate_entity_policy()
     validate_video_rights_policy()
@@ -383,6 +415,7 @@ def main() -> int:
         "visible_copy_ai_ownership": "ok",
         "facebook_delivery_policy": "ok",
         "reader_friendly_policy": "ok",
+        "no_false_attack_claims": "ok",
         "semantic_story_dedupe": "ok",
         "entity_policy": "ok",
         "video_rights_policy": "ok",
