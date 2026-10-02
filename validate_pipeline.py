@@ -273,7 +273,7 @@ def validate_no_false_attack_claims() -> None:
         "protected_entities": ["PS5"],
         "protected_numbers": ["7.00", "13.60"],
         "title": "يمكن اختراق PS5 عبر jailbreak",
-        "facebook_post": "يعمل على firmware من 7.00 إلى 13.60.",
+        "facebook_post": "يعمل jailbreak على PS5 مع firmware من 7.00 إلى 13.60.",
         "first_comment": "",
         "language": "ar",
         "source_url": "",
