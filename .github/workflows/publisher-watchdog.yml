@@ -3,9 +3,9 @@ name: Publisher watchdog
 on:
   workflow_dispatch:
   schedule:
-    # Backup heartbeat. The production workflow itself polls every 5 minutes.
-    # This watchdog only intervenes when no production run has started recently.
-    - cron: "4,19,34,49 * * * *"
+    # Backup heartbeat. Production polls every 5 minutes; watchdog checks every 10.
+    # It only intervenes when the production heartbeat goes stale.
+    - cron: "4,14,24,34,44,54 * * * *"
   push:
     branches:
       - main
@@ -76,7 +76,7 @@ jobs:
               raise SystemExit(0)
 
           age_minutes = None if newest is None else (now - newest).total_seconds() / 60
-          if age_minutes is not None and age_minutes < 12:
+          if age_minutes is not None and age_minutes < 8:
               print(f"Production heartbeat is healthy ({age_minutes:.1f} minutes old).")
               raise SystemExit(0)
 
