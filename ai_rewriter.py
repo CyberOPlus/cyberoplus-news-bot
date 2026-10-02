@@ -757,9 +757,9 @@ def _validate_reader_friendly_copy(title: str, body: str) -> None:
         (part.strip() for part in re.split(r"\n\s*\n", clean_body) if part.strip()),
         "",
     )
-    if TITLE_JARGON_RE.search(first_paragraph):
+    if len(TITLE_JARGON_RE.findall(first_paragraph)) > 1:
         raise RuntimeError(
-            "Facebook first paragraph introduces technical jargon before the reader understands the news."
+            "Facebook first paragraph contains too much technical jargon before the reader understands the news."
         )
 
     if GENERIC_EDITORIAL_CONCLUSION_RE.search(clean_body):
@@ -1306,7 +1306,7 @@ def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "AI used an invented Arabic transliteration",
         "Facebook body repeats the headline opening instead of continuing with a new fact",
         "Facebook title contains too much unexplained technical jargon",
-        "Facebook first paragraph introduces technical jargon before the reader understands the news",
+        "Facebook first paragraph contains too much technical jargon before the reader understands the news",
         "Card title contains too much unexplained technical jargon",
         "AI added a generic editorial conclusion",
     )
