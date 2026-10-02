@@ -416,6 +416,11 @@ def isolate_latin_runs_rtl(text: str) -> str:
         .replace("\u200e", "")
         .replace("\u200f", "")
     )
+    normalized = re.sub(
+        r"(?<=[A-Za-z0-9])[\u2010\u2011\u2012\u2013\u2212](?=[A-Za-z0-9])",
+        "-",
+        normalized,
+    )
     protected = URL_RE.sub(stash_url, normalized)
 
     def wrap(match: re.Match[str]) -> str:
@@ -743,7 +748,55 @@ def _repeats_headline_opening(title: str, body: str) -> bool:
     for indefinite, definite in lead_pairs:
         if indefinite in clean_title and (indefinite in clean_first or definite in clean_first):
             return True
+
+    # If the headline already names the news object, the first paragraph should
+    # continue with the action/result instead of naming the same object again.
+    title_key = _visible_key(clean_title)
+    first_words = _opening_words(clean_first, 12)
+    first_window = " ".join(first_words)
+    for noun in ("أداة", "تحديث", "ثغرة", "ميزة", "إصدار", "نسخة", "خدمة", "تقرير", "نموذج"):
+        if noun in title_key and noun in first_window:
+            return True
     return False
+
+
+ORIGINAL_TECH_TERMS = (
+    "jailbreak",
+    "homebrew",
+    "firmware",
+    "kernel",
+    "WebKit",
+    "use-after-free",
+)
+
+
+def _normalized_tech_text(text: str) -> str:
+    value = re.sub(
+        r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]",
+        "",
+        str(text or ""),
+    )
+    value = re.sub(
+        r"(?<=[A-Za-z0-9])[\u2010\u2011\u2012\u2013\u2212](?=[A-Za-z0-9])",
+        "-",
+        value,
+    )
+    return value.casefold()
+
+
+def _validate_original_technical_terms(source_text: str, output_text: str) -> None:
+    source = _normalized_tech_text(source_text)
+    output = _normalized_tech_text(output_text)
+    missing = [
+        term
+        for term in ORIGINAL_TECH_TERMS
+        if term.casefold() in source and term.casefold() not in output
+    ]
+    if missing:
+        raise RuntimeError(
+            "AI translated or omitted original technical terms from source: "
+            + ", ".join(missing)
+        )
 
 
 def _validate_reader_friendly_copy(title: str, body: str) -> None:
@@ -994,6 +1047,7 @@ def enforce_source_policy(
 
     visible_copy = (title + "\n\n" + body).strip()
     _validate_reader_friendly_copy(title, body)
+    _validate_original_technical_terms(source_text, visible_copy)
     if GENERATED_ATTACK_CLAIM_RE.search(visible_copy) and not SOURCE_ATTACK_EVENT_RE.search(source_text):
         raise RuntimeError(
             "AI turned an exploit or technical capability into an attack/hack that the source did not report."
@@ -1330,6 +1384,7 @@ def call_gemini(item: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     )
     reader_markers = (
         "AI used an invented Arabic transliteration",
+        "AI translated or omitted original technical terms from source",
         "Facebook body repeats the headline opening instead of continuing with a new fact",
         "Facebook title contains too much unexplained technical jargon",
         "Facebook first paragraph contains too much technical jargon before the reader understands the news",
