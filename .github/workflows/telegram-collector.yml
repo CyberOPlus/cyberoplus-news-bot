@@ -104,7 +104,10 @@ jobs:
           fi
 
       - name: Publish at most one eligible Facebook item before AI
+        id: publish_before
         if: steps.probe.outputs.needs_run == 'true'
+        # Facebook outages must not block preparing newly collected items.
+        continue-on-error: true
         env:
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
@@ -115,7 +118,10 @@ jobs:
           python facebook_publisher.py
 
       - name: Prepare every unprocessed item in Arabic
+        id: prepare
         if: steps.probe.outputs.needs_run == 'true'
+        # Existing AI-prepared items can still publish when preparation fails.
+        continue-on-error: true
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODELS: gemini-3.7-flash,gemini-3.5-flash
@@ -173,7 +179,10 @@ jobs:
           fi
 
       - name: Publish at most one eligible Facebook item after AI
-        if: steps.probe.outputs.needs_run == 'true'
+        id: publish_after
+        # A failed first write may have been accepted by Meta. Reconcile it in
+        # the next cycle instead of immediately attempting the same item again.
+        if: steps.probe.outputs.needs_run == 'true' && steps.publish_before.outcome != 'failure'
         env:
           FACEBOOK_PAGE_ID: ${{ secrets.FACEBOOK_PAGE_ID }}
           FACEBOOK_PAGE_ACCESS_TOKEN: ${{ secrets.FACEBOOK_PAGE_ACCESS_TOKEN }}
@@ -245,11 +254,20 @@ jobs:
           echo "- Preflight: \`${{ steps.probe.outputs.reason }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Full pipeline ran: \`${{ steps.probe.outputs.needs_run }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Telegram collector: \`${{ steps.collect.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Facebook before AI: \`${{ steps.publish_before.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Arabic preparation: \`${{ steps.prepare.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Facebook after AI: \`${{ steps.publish_after.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
           if [ "${{ steps.collect.outcome }}" = "failure" ]; then
             echo "::warning::Telegram collection failed; existing AI/Facebook queues continued and the next cycle will retry the source."
           fi
           echo "- Polling: continuous successor runs with a 60-second pause; 5-minute schedule is backup" >> "$GITHUB_STEP_SUMMARY"
           echo "- Queue policy: one priority item per publisher attempt; 5-minute minimum gap from config" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.publish_before.outcome }}" = "failure" ] \
+             || [ "${{ steps.prepare.outcome }}" = "failure" ] \
+             || [ "${{ steps.publish_after.outcome }}" = "failure" ]; then
+            echo "::error::A service attempt failed. Independent work continued, queue changes were persisted, and the successor cycle will retry."
+            exit 1
+          fi
 
       - name: Pace continuous monitoring
         if: always() && github.ref == 'refs/heads/main'
