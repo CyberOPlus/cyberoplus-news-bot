@@ -64,6 +64,20 @@ class PipelineReliabilityTests(unittest.TestCase):
         self.assertIn("id: collect", collector)
         self.assertIn("steps.collect.outcome", workflow)
 
+    def test_service_failures_do_not_block_independent_preparation_or_queued_work(self):
+        workflow = (Path(__file__).resolve().parents[1] /
+                    ".github/workflows/telegram-collector.yml").read_text()
+        for name, step_id in (
+            ("Publish at most one eligible Facebook item before AI", "publish_before"),
+            ("Prepare every unprocessed item in Arabic", "prepare"),
+        ):
+            step = workflow.split(f"- name: {name}", 1)[1].split("- name:", 1)[0]
+            self.assertIn("continue-on-error: true", step)
+            self.assertIn(f"id: {step_id}", step)
+            self.assertIn(f"steps.{step_id}.outcome", workflow)
+        after = workflow.split("- name: Publish at most one eligible Facebook item after AI", 1)[1].split("- name:", 1)[0]
+        self.assertIn("steps.publish_before.outcome != 'failure'", after)
+
 
 if __name__ == "__main__":
     unittest.main()

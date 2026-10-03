@@ -141,7 +141,11 @@ def state() -> tuple[dict[int, dict], datetime | None]:
 
 
 def post_comment(post_id: str, token: str, message: str) -> str:
-    return api("POST", f"{post_id}/comments", token, data={"message": message}).get("id", "")
+    payload = api("POST", f"{post_id}/comments", token, data={"message": message})
+    comment_id = str(payload.get("id") or "").strip()
+    if not comment_id:
+        raise RuntimeError("Meta comment creation returned no comment ID.")
+    return comment_id
 
 
 def terminal_ids() -> set[int]:
@@ -177,9 +181,12 @@ def recover_existing_remote_post(page_id: str, token: str, message: str) -> str:
             timeout=45,
         )
     except Exception as exc:
-        print(f"WARNING Facebook recovery lookup failed: {exc}", file=sys.stderr)
-        return ""
-    for row in payload.get("data") or []:
+        # An unavailable lookup does not prove the previous write was absent.
+        # Leave the ready item retryable instead of risking another live post.
+        raise RuntimeError("Facebook recovery lookup failed; publication deferred.") from exc
+    if not isinstance(payload.get("data"), list):
+        raise RuntimeError("Facebook recovery lookup returned an invalid response; publication deferred.")
+    for row in payload["data"]:
         if _normalize_delivery_message(row.get("message") or "") == needle:
             return str(row.get("id") or "")
     return ""
@@ -226,7 +233,10 @@ def publish_images(page_id: str, token: str, message: str, photo_ids: list[str])
     for index, photo_id in enumerate(photo_ids[:10]):
         data[f"attached_media[{index}]"] = json.dumps({"media_fbid": photo_id})
     payload = api("POST", f"{page_id}/feed", token, data=data)
-    return str(payload.get("id") or "")
+    post_id = str(payload.get("id") or "").strip()
+    if not post_id:
+        raise RuntimeError("Meta feed publication returned no post ID.")
+    return post_id
 
 
 def publish_video_file(page_id: str, token: str, message: str, video_asset) -> str:
@@ -572,8 +582,8 @@ def main() -> int:
                 list(media.get("video_urls") or [])
                 + ([media.get("video_url")] if media.get("video_url") else [])
             )
-            try:
-                with tempfile.TemporaryDirectory(prefix=f"cyberoplus-{tid}-") as temp_dir:
+            with tempfile.TemporaryDirectory(prefix=f"cyberoplus-{tid}-") as temp_dir:
+                try:
                     video_asset = prepare_branded_video(
                         video_urls,
                         telegram_post_url,
@@ -588,29 +598,32 @@ def main() -> int:
                         "bytes": video_asset.size,
                         "branded": video_asset.branded,
                     }
+                except Exception as exc:
+                    media_errors.append(f"video: {exc}")
+                    print(f"WARNING video preparation fallback: {exc}", file=sys.stderr)
+                else:
+                    # Only preparation failures may fall back to an image.
+                    # A failed upload may already have created a live video;
+                    # the next cycle must reconcile it before another write.
                     post_id = publish_video_file(page_id, token, message, video_asset)
-
-                append_event(
-                    {
-                        "event": "published",
-                        "telegram_id": tid,
-                        "facebook_post_id": post_id,
-                        "published_at": now_iso(),
-                        "first_comment": first_comment,
-                        "source_url": item.get("source_url") or "",
-                        "media_mode": "video",
-                        "delivery": delivery_meta,
-                        "story_fingerprint": item.get("story_fingerprint") or "",
-                        "media_errors": media_errors,
-                        "media_diagnostics": diagnostics,
-                    }
-                )
-                comment_status = publish_first_comment(tid, post_id, token, first_comment)
-                print(json.dumps({"status": "published_to_facebook", "telegram_id": tid, "facebook_post_id": post_id, "media_mode": "video", "first_comment_status": comment_status, "media_diagnostics": diagnostics}, ensure_ascii=False, indent=2))
-                return 0
-            except Exception as exc:
-                media_errors.append(f"video: {exc}")
-                print(f"WARNING video fallback: {exc}", file=sys.stderr)
+                    append_event(
+                        {
+                            "event": "published",
+                            "telegram_id": tid,
+                            "facebook_post_id": post_id,
+                            "published_at": now_iso(),
+                            "first_comment": first_comment,
+                            "source_url": item.get("source_url") or "",
+                            "media_mode": "video",
+                            "delivery": delivery_meta,
+                            "story_fingerprint": item.get("story_fingerprint") or "",
+                            "media_errors": media_errors,
+                            "media_diagnostics": diagnostics,
+                        }
+                    )
+                    comment_status = publish_first_comment(tid, post_id, token, first_comment)
+                    print(json.dumps({"status": "published_to_facebook", "telegram_id": tid, "facebook_post_id": post_id, "media_mode": "video", "first_comment_status": comment_status, "media_diagnostics": diagnostics}, ensure_ascii=False, indent=2))
+                    return 0
         elif media.get("has_video"):
             diagnostics["video_skipped_by_rights"] = True
             print(
@@ -647,7 +660,12 @@ def main() -> int:
         if not assets:
             if not message:
                 raise RuntimeError("Post has no text and no usable Telegram image/video.")
-            card_title = str(item.get("card_title") or title or body).strip()
+            card_title = str(item.get("card_title") or "").strip()
+            if not card_title:
+                # Reuse the AI-written hook; no new caption is synthesized.
+                card_title = re.split(
+                    r"\n\s*\n", str(item.get("facebook_post") or "").strip(), maxsplit=1
+                )[0]
             assets = [build_branded_fallback_asset(card_title, variant_key=tid)]
             diagnostics["generated_fallback_used"] = True
             diagnostics["images"]["selected"] = [{
