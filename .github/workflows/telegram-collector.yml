@@ -277,7 +277,7 @@ jobs:
         # Idle and dispatched runs must keep monitoring when cron is delayed.
         # The pause above bounds idle polling; Facebook retains its 5-minute gap.
         if: always() && github.ref == 'refs/heads/main'
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           retries: 3
           script: |
