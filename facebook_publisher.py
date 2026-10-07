@@ -476,6 +476,17 @@ def delivery_metadata(item: dict, message: str) -> dict:
     if source_dt:
         source_age_minutes = max(0, int((now() - source_dt).total_seconds() // 60))
     editorial = item.get("editorial") or {}
+    primary_evidence = [
+        row for row in (item.get("primary_evidence") or [])
+        if isinstance(row, dict) and str(row.get("url") or "").strip()
+    ]
+    source_url = str(item.get("source_url") or "").strip()
+    if primary_evidence:
+        verification_tier = "linked_primary_excerpt"
+    elif source_url:
+        verification_tier = "linked_external_source"
+    else:
+        verification_tier = "discovery_attribution_only"
     return {
         "policy_version": int(TIMING.get("version", 0) or 0),
         "content_type": editorial.get("content_type") or "general",
@@ -486,6 +497,9 @@ def delivery_metadata(item: dict, message: str) -> dict:
         "paragraph_count": len([p for p in re.split(r"\n\s*\n", message) if p.strip()]),
         "source_age_minutes": source_age_minutes,
         "minimum_gap_minutes": MIN_GAP,
+        "verification_tier": verification_tier,
+        "primary_evidence_count": len(primary_evidence),
+        "source_link_present": bool(source_url),
     }
 
 

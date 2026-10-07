@@ -44,3 +44,26 @@ no clipping. Additional tests reproduce the empty-row blockage and assert the
 next valid item can publish, and prove a saved cooldown prevents even the Page
 verification request. Production activation is recorded separately by the commit
 and workflow state; tests do not prove external AI/Meta availability.
+
+## Evidence observability follow-up — 2026-10-07
+
+The first three policy-v5 publications (Telegram 1790, 1792 and 1794) were
+successfully delivered in English. Their stored rows had no `source_url` or
+`primary_evidence`. This is not counted as primary verification merely because
+the captions use cautious attribution. Delivery events now record one of:
+`linked_primary_excerpt`, `linked_external_source`, or
+`discovery_attribution_only`, together with evidence count and link presence.
+This measurement changes no publication decision yet; it provides page-specific
+coverage data before a source gate is introduced.
+
+Research reviewed again on 2026-10-07:
+- Meta's April 24, 2025 spam guidance: relevant captions, restrained hashtags,
+  and original/authorized content remain the supported policy direction.
+- Reuters Fact Check methodology: trace claims to origins, name sources, and link
+  publicly viewable evidence where possible.
+- Reuters' August 28, 2026 visual-verification account: images require provenance
+  and contextual checks; automated AI detection alone is not conclusive.
+
+These sources support measuring provenance and avoiding false verification
+claims. They do not establish a safe universal posting rate or prove performance
+for Cybero Plus.

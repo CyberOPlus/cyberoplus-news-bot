@@ -79,3 +79,29 @@ class EnglishRolloutTests(unittest.TestCase):
         send.assert_called_once()
         self.assertEqual(append.call_args.args[0]['event'],'meta_cooldown')
         self.assertGreater(policy.timestamp(append.call_args.args[0]['retry_at']),pub.now()+timedelta(minutes=59))
+
+    def test_delivery_records_verification_tier_without_claiming_verification(self):
+        base = dict(
+            source_published_at=datetime.now(timezone.utc).isoformat(),
+            editorial={},
+        )
+        attributed = pub.delivery_metadata(base, 'A reported event.')
+        self.assertEqual(attributed['verification_tier'], 'discovery_attribution_only')
+        self.assertFalse(attributed['source_link_present'])
+
+        linked = pub.delivery_metadata(
+            dict(base, source_url='https://example.com/report'),
+            'A linked report.',
+        )
+        self.assertEqual(linked['verification_tier'], 'linked_external_source')
+
+        primary = pub.delivery_metadata(
+            dict(
+                base,
+                source_url='https://www.cisa.gov/report',
+                primary_evidence=[{'url': 'https://www.cisa.gov/report', 'text': 'Evidence'}],
+            ),
+            'A primary-source report.',
+        )
+        self.assertEqual(primary['verification_tier'], 'linked_primary_excerpt')
+        self.assertEqual(primary['primary_evidence_count'], 1)
