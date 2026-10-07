@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare a faithful Modern Standard Arabic Facebook post using resilient free AI fallbacks.
+"""Prepare a faithful international English Facebook post using resilient free AI fallbacks.
 
 The public entry points are intentionally kept stable because ai_batch_processor.py
 imports normalize_item() and call_gemini().
@@ -31,7 +31,8 @@ from telegram_collector import fetch_page, parse_messages
 
 ROOT = Path(__file__).resolve().parent
 INBOX_PATH = ROOT / "data" / "inbox.jsonl"
-PROMPT_PATH = ROOT / "prompts" / "facebook_ar.txt"
+from news_policy import english_enabled, require_english
+PROMPT_PATH = ROOT / "prompts" / ("facebook_en.txt" if english_enabled() else "facebook_ar.txt")
 
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
@@ -998,6 +999,8 @@ def enforce_source_policy(
     source_note: str = "",
     has_explicit_title: bool = False,
     source_text: str = "",
+    language: str = "ar",
+    evidence_text: str = "",
 ) -> dict[str, Any]:
     source_url = _canonical_source_link(allowed_links)
     note = str(source_note or "").strip()
@@ -1016,7 +1019,7 @@ def enforce_source_policy(
     # compatibility in stored JSON and must never create a second visible lead.
     title = ""
     result["title"] = ""
-    result["language"] = "ar"
+    result["language"] = language
 
     content_type = str(result.get("content_type") or "general").strip()
     result["content_type"] = content_type if content_type in CONTENT_TYPES else "general"
@@ -1063,14 +1066,17 @@ def enforce_source_policy(
         "project": "المشروع",
         "more_info": "الرابط",
     }
+    if language == "en":
+        labels = {"source": "Source", "tool": "Tool", "download": "Download", "project": "Project", "more_info": "Details"}
+        note = ""
     if note and source_url:
-        label = labels.get(role, "المصدر")
+        label = labels.get(role, "Source" if language == "en" else "المصدر")
         result["first_comment"] = f"{label}: {note}\n{source_url}"
     elif note:
-        label = labels.get(role, "المصدر")
+        label = labels.get(role, "Source" if language == "en" else "المصدر")
         result["first_comment"] = f"{label}: {note}"
     elif source_url:
-        label = labels.get(role, "المصدر")
+        label = labels.get(role, "Source" if language == "en" else "المصدر")
         result["first_comment"] = f"{label}: {source_url}"
     else:
         result["first_comment"] = ""
@@ -1102,18 +1108,30 @@ def enforce_source_policy(
         raise RuntimeError("AI returned no visible Facebook copy.")
 
     visible_copy = body
-    _validate_reader_friendly_copy("", body)
+    if language == "en":
+        require_english(body)
+    else:
+        _validate_reader_friendly_copy("", body)
     if GENERATED_ATTACK_CLAIM_RE.search(visible_copy) and not SOURCE_ATTACK_EVENT_RE.search(source_text):
         raise RuntimeError(
             "AI turned an exploit or technical capability into an attack/hack that the source did not report."
         )
-    _validate_fact_fidelity(source_text, visible_copy)
+    if evidence_text:
+        all_evidence = source_text + "\n" + evidence_text
+        if (_numeric_tokens(visible_copy) | _identifier_numeric_tokens(visible_copy)) - (_numeric_tokens(all_evidence) | _identifier_numeric_tokens(all_evidence)):
+            raise RuntimeError("AI added numbers absent from supplied evidence")
+        if _cve_tokens(visible_copy) - _cve_tokens(all_evidence):
+            raise RuntimeError("AI added an unsupported CVE")
+        if (_numeric_tokens(source_text) - _numeric_tokens(visible_copy)) or (_cve_tokens(source_text) - _cve_tokens(visible_copy)):
+            raise RuntimeError("AI omitted material discovery facts")
+    else:
+        _validate_fact_fidelity(source_text, visible_copy)
     _validate_protected_entities(result.get("protected_entities") or [], visible_copy)
 
     # The AI owns the factual wording; the publisher owns attention emoji,
     # hashtags and final delivery decoration.
     result["title"] = ""
-    result["facebook_post"] = force_rtl_paragraphs(body) if body else ""
+    result["facebook_post"] = body if language == "en" else (force_rtl_paragraphs(body) if body else "")
 
     card_title = str(result.get("card_title") or "").strip()
     card_title = _restore_source_terms(source_text, card_title)
@@ -1121,13 +1139,17 @@ def enforce_source_policy(
     card_title = re.sub(r"\s+", " ", card_title)
     if DISALLOWED_TECH_TRANSLITERATION_RE.search(card_title):
         raise RuntimeError("AI used an invented Arabic transliteration in card title.")
-    if len(TITLE_JARGON_RE.findall(card_title)) > 1:
+    if language != "en" and len(TITLE_JARGON_RE.findall(card_title)) > 1:
         raise RuntimeError("Card title contains too much unexplained technical jargon.")
     words = [word for word in card_title.split() if word]
     if len(words) > 11:
+        if language == "en":
+            raise RuntimeError("AI card title exceeds 11 words; rewrite without truncating facts")
         card_title = " ".join(words[:11]).rstrip("،,:;؛.!?؟")
 
-    result["card_title"] = isolate_latin_runs_rtl(card_title)
+    if language == "en":
+        require_english(card_title)
+    result["card_title"] = card_title if language == "en" else isolate_latin_runs_rtl(card_title)
     return result
 
 
@@ -1186,6 +1208,7 @@ def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
         "telegram_id": item["telegram_id"],
         "published_at": item["published_at"],
         "text": editorial_text,
+        "primary_evidence": item.get("primary_evidence", []),
         # Do not expose URL paths/slugs to the model. They can contain project,
         # usernames or filenames that are useful as links but are not facts in
         # the Telegram prose. The code restores the canonical URL later.
@@ -1200,7 +1223,7 @@ def _prompt_payload(item: dict[str, Any]) -> tuple[str, str]:
         },
     }
     user_text = (
-        "طبّق التعليمات على هذا المنشور وأعد JSON صالحاً فقط.\n\n"
+        "Apply the editorial instructions. Return valid JSON in English only.\n\n"
         + json.dumps(user_payload, ensure_ascii=False, indent=2)
     )
 
@@ -1233,13 +1256,26 @@ def _finalize(
     generated: dict[str, Any],
     item: dict[str, Any],
 ) -> dict[str, Any]:
-    return enforce_source_policy(
-        generated,
-        item["source_links"],
-        item.get("source_note", ""),
-        bool(item.get("has_explicit_title")),
-        item.get("text", ""),
+    language = "en" if english_enabled() else "ar"
+    if language == "en" and generated.get("language") != "en":
+        raise RuntimeError("AI did not declare English output")
+    evidence = item.get("primary_evidence") or []
+    result = enforce_source_policy(
+        generated, item["source_links"], item.get("source_note", ""),
+        bool(item.get("has_explicit_title")), item.get("text", ""),
+        language=language, evidence_text="\n".join(e["text"] for e in evidence),
     )
+    if language == "en":
+        if not evidence and result["certainty"] == "confirmed":
+            if not re.search(r"(?i)\b(?:reportedly|reports?|according to|says?|said|announced|claims?)\b", result["facebook_post"]):
+                raise RuntimeError("Unverified discovery needs explicit attribution in visible copy")
+            result["certainty"] = "reported"
+        if evidence:
+            result["source_url"] = evidence[0]["url"]
+            result["first_comment"] = "Sources: " + "\n".join(e["url"] for e in evidence)
+        result["primary_evidence"] = evidence
+    return result
+
 
 
 def _call_one_gemini(

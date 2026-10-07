@@ -7,6 +7,7 @@ import re
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import requests
@@ -20,6 +21,7 @@ from image_resolver import (
 from video_processor import prepare_branded_video
 from video_rights import evaluate_video_rights
 from story_dedupe import annotate_story, find_duplicate_story
+from news_policy import eligibility, english_enabled, require_english
 
 
 ROOT = Path(__file__).resolve().parent
@@ -95,6 +97,21 @@ def api(method: str, path: str, token: str, data=None, params=None, timeout: int
         params=params if method == "GET" else None,
         timeout=timeout,
     )
+    if response.status_code == 429:
+        raw = str(response.headers.get("Retry-After", "")).strip()
+        try:
+            seconds = max(60, int(raw))
+            retry_at = now() + timedelta(seconds=seconds)
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(raw)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                retry_at = max(now() + timedelta(seconds=60), retry_at)
+            except (TypeError, ValueError, OverflowError):
+                retry_at = now() + timedelta(minutes=15)
+        append_event({"event": "meta_cooldown", "retry_at": retry_at.isoformat(), "recorded_at": now_iso()})
+        raise RuntimeError("Meta rate limited; persistent cooldown recorded.")
     try:
         payload = response.json()
     except ValueError as exc:
@@ -151,7 +168,7 @@ def post_comment(post_id: str, token: str, message: str) -> str:
 def terminal_ids() -> set[int]:
     terminal = set()
     for event in read_jsonl(EVENTS):
-        if event.get("event") not in {"published", "duplicate_skipped"}:
+        if event.get("event") not in {"published", "duplicate_skipped", "expired", "editorial_hold"}:
             continue
         try:
             tid = int(event.get("telegram_id", 0) or 0)
@@ -382,7 +399,7 @@ def _topic_hashtag(item: dict) -> str:
 
 def _delivery_hashtags(item: dict) -> list[str]:
     policy = TIMING.get("caption_policy") or {}
-    maximum = max(1, int(policy.get("max_hashtags", 2)))
+    maximum = max(0, min(2, int(policy.get("max_hashtags", 2))))
     brand = str(policy.get("brand_hashtag") or "#CyberoPlus").strip()
     values = _unique([_topic_hashtag(item), brand])
     return values[:maximum]
@@ -403,7 +420,7 @@ def build_delivery_message(item: dict) -> str:
         first = paragraphs[0]
         if first.startswith("\u2067") and first.endswith("\u2069"):
             first = first[1:-1]
-        paragraphs[0] = _rtl_lead(marker, first)
+        paragraphs[0] = (marker + " " + first) if item.get("language") == "en" else _rtl_lead(marker, first)
 
     hashtags = _delivery_hashtags(item)
     message = "\n\n".join(paragraphs)
@@ -476,6 +493,13 @@ def main() -> int:
     try:
         page_id = os.environ["FACEBOOK_PAGE_ID"].strip()
         token = os.environ["FACEBOOK_PAGE_ACCESS_TOKEN"].strip()
+        for event in read_jsonl(EVENTS):
+            if event.get("event") == "meta_cooldown":
+                from news_policy import timestamp
+                retry_at = timestamp(event.get("retry_at"))
+                if retry_at and retry_at > now():
+                    print(json.dumps({"status": "meta_cooldown", "retry_at": retry_at.isoformat()}))
+                    return 0
         page = verify(page_id, token)
         print(json.dumps({"facebook_connection": "ok", "page_name": page.get("name"), "page_id": page.get("id")}, ensure_ascii=False))
 
@@ -484,6 +508,13 @@ def main() -> int:
         posts, last = state()
 
         ready = read_jsonl(READY)
+        # Migration may append a newer English rendering of the same item.
+        latest = {}
+        for row in ready:
+            tid = row.get("telegram_id")
+            if tid not in latest or int(row.get("editorial_version", 0)) >= int(latest[tid].get("editorial_version", 0)):
+                latest[tid] = row
+        ready = list(latest.values())
         terminal = terminal_ids()
         pending = [
             row
@@ -491,7 +522,18 @@ def main() -> int:
             if row.get("status") == "ready"
             and int(row.get("telegram_id", 0)) not in terminal
         ]
-        pending = sorted(pending, key=queue_priority_key)
+        events = read_jsonl(EVENTS)
+        eligible = []
+        for row in pending:
+            reason = eligibility(row, events, now())
+            if not str(row.get("facebook_post") or "").strip():
+                reason = "missing_editorial_text"
+            if reason in {"stale_source", "missing_editorial_text"}:
+                append_event({"event": "expired" if reason == "stale_source" else "editorial_hold",
+                              "telegram_id": row["telegram_id"], "reason": reason, "held_at": now_iso()})
+            if not reason:
+                eligible.append(row)
+        pending = sorted(eligible, key=queue_priority_key)
 
         target_id_raw = os.environ.get("FACEBOOK_TARGET_TELEGRAM_ID", "").strip()
         if target_id_raw:
@@ -533,6 +575,13 @@ def main() -> int:
             print(json.dumps({"status": "duplicate_story_skipped", "telegram_id": tid, **duplicate}, ensure_ascii=False, indent=2))
             return 0
 
+        if english_enabled():
+            for field in ("facebook_post", "card_title"):
+                if str(item.get(field) or "").strip():
+                    require_english(item[field])
+            comment_label = re.sub(r"https?://\S+", "", str(item.get("first_comment") or "")).strip()
+            if comment_label:
+                require_english(comment_label)
         message = build_delivery_message(item)
         delivery_meta = delivery_metadata(item, message)
 

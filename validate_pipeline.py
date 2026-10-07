@@ -151,7 +151,7 @@ def validate_facebook_delivery_policy() -> None:
         raise RuntimeError("Facebook renderer displayed the legacy title.")
     if "تحذير:" in plain_message or "عاجل:" in plain_message or "مهم:" in plain_message:
         raise RuntimeError("Text attention labels leaked into Facebook delivery.")
-    if "#الأمن_السيبراني" not in message or "#CyberoPlus" not in message:
+    if "#Cybersecurity" not in message or "#CyberoPlus" not in message:
         raise RuntimeError("Expected Cybero Plus/topic hashtags are missing.")
     if message.count("#") > 2:
         raise RuntimeError("Delivery renderer exceeded the two-hashtag limit.")
@@ -172,7 +172,7 @@ def validate_facebook_delivery_policy() -> None:
         },
     }
     ai_message = build_delivery_message(ai_item)
-    if "#الذكاء_الاصطناعي" not in ai_message:
+    if "#AI" not in ai_message:
         raise RuntimeError("AI topic hashtag classification regressed.")
 
     breaking = dict(ai_item)

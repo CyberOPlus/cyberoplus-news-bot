@@ -1,22 +1,22 @@
 {
-  "version": 4,
+  "version": 5,
   "platform": "Facebook",
   "phase": "facebook_native_newsroom",
-  "note": "Near-continuous Facebook newsroom policy: poll Telegram every 5 minutes, publish fresh news promptly, and drain bursts with a short 5-minute Facebook gap instead of flooding.",
+  "note": "Telegram remains discovery input. English global audience; caps are conservative operating limits, not a Meta guarantee.",
   "language": {
-    "primary": "ar",
-    "style": "clear_modern_standard_arabic",
+    "primary": "en",
+    "style": "clear_international_english",
     "keep_technical_terms_in_english_when_clearer": true,
     "use_moroccan_darija": false,
     "literal_translation": false
   },
   "publishing_policy": {
-    "publish_every_collected_item": true,
-    "skip_items": false,
+    "publish_every_collected_item": false,
+    "skip_items": true,
     "publish_as_soon_as_ready": true,
-    "minimum_gap_minutes": 5,
+    "minimum_gap_minutes": 30,
     "max_posts_per_publisher_attempt": 1,
-    "queue_mode": "priority_one_per_5_minute_slot",
+    "queue_mode": "verified_fresh_priority_queue",
     "aging_boost_after_hours": 6,
     "priority_order": [
       "breaking",
@@ -27,7 +27,10 @@
     ],
     "never_delay_for_threads_peak_times": true,
     "continuous_poll_minutes": 5,
-    "backlog_drain_gap_minutes": 5
+    "backlog_drain_gap_minutes": 30,
+    "max_posts_rolling_hour": 2,
+    "max_posts_rolling_24h": 12,
+    "max_source_age_hours": 24
   },
   "source_policy": {
     "remove_intcyberdigest_branding": true,
@@ -74,10 +77,10 @@
     "max_hashtags": 2,
     "add_topic_hashtag": true,
     "topic_hashtags": {
-      "cybersecurity": "#الأمن_السيبراني",
-      "artificial_intelligence": "#الذكاء_الاصطناعي",
-      "privacy": "#الخصوصية",
-      "technology": "#تقنية"
+      "cybersecurity": "#Cybersecurity",
+      "artificial_intelligence": "#AI",
+      "privacy": "#Privacy",
+      "technology": "#Technology"
     },
     "emoji_policy": "deterministic_from_verified_attention_and_content_type",
     "source_link_location": "first_comment"

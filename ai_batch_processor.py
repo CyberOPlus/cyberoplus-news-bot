@@ -22,6 +22,8 @@ from typing import Any
 
 from ai_rewriter import call_gemini, normalize_item
 from story_dedupe import annotate_story, find_duplicate_story
+from news_policy import english_enabled, EDITORIAL_VERSION
+from source_enrichment import enrich
 
 ROOT = Path(__file__).resolve().parent
 INBOX_PATH = ROOT / "data" / "inbox.jsonl"
@@ -80,8 +82,10 @@ def save_ai_state(last_processed_id: int, processed_count: int) -> None:
 
 
 def existing_ready_ids() -> set[int]:
-    ids: set[int] = set()
+    ids: set[int] = {int(r.get("telegram_id", 0)) for r in read_jsonl(ROOT / "data/facebook_events.jsonl") if r.get("event") in {"published", "duplicate_skipped", "expired"}}
     for row in read_jsonl(READY_PATH):
+        if english_enabled() and row.get("status") == "ready" and row.get("language") != "en":
+            continue
         try:
             ids.add(int(row["telegram_id"]))
         except (KeyError, TypeError, ValueError):
@@ -162,7 +166,7 @@ def append_ready(row: dict[str, Any]) -> None:
 
 
 def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
-    item = normalize_item(raw_item)
+    item = enrich(normalize_item(raw_item))
 
     if not str(item.get("text") or "").strip():
         supported_media = bool(raw_item.get("has_image") or raw_item.get("has_video"))
@@ -174,8 +178,8 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
             ],
             "source_published_at": item.get("published_at"),
             "prepared_at": now_iso(),
-            "status": "ready" if supported_media else "unsupported_media",
-            "language": "ar",
+            "status": "needs_editorial_context" if supported_media else "unsupported_media",
+            "language": "en" if english_enabled() else "ar",
             "title": "",
             "facebook_post": "",
             "first_comment": "",
@@ -204,6 +208,7 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
                 "telegram_post_url": raw_item.get("telegram_post_url") or "",
             },
             "ai_model": "not_required",
+            "editorial_version": EDITORIAL_VERSION,
         }
 
     last_error: Exception | None = None
@@ -219,7 +224,9 @@ def prepare_one(raw_item: dict[str, Any]) -> dict[str, Any]:
                 "source_published_at": item.get("published_at"),
                 "prepared_at": now_iso(),
                 "status": "ready",
-                "language": result.get("language", "ar"),
+                "language": result.get("language", "en"),
+                "editorial_version": EDITORIAL_VERSION,
+                "primary_evidence": result.get("primary_evidence", []),
                 "title": result["title"],
                 "facebook_post": result["facebook_post"],
                 "first_comment": result["first_comment"],
@@ -343,7 +350,7 @@ def main() -> int:
                 continue
 
             ready_row = annotate_story(ready_row)
-            duplicate = find_duplicate_story(ready_row, ready_rows)
+            duplicate = find_duplicate_story(ready_row, [r for r in ready_rows if r.get("telegram_id") != ready_row.get("telegram_id")])
             if duplicate:
                 ready_row["status"] = "duplicate"
                 ready_row["duplicate_of_telegram_id"] = duplicate["duplicate_of_telegram_id"]

@@ -558,8 +558,8 @@ def _native_bbox(
             (0, 0),
             text,
             font=font,
-            direction="rtl",
-            language="ar",
+            direction="rtl" if re.search(r"[\u0600-\u06ff]", text) else "ltr",
+            language="ar" if re.search(r"[\u0600-\u06ff]", text) else "en",
         )
     except Exception:
         return None
@@ -695,8 +695,8 @@ def _draw_title_line(
                 clean,
                 font=font,
                 fill=fill,
-                direction="rtl",
-                language="ar",
+                direction="rtl" if re.search(r"[\u0600-\u06ff]", clean) else "ltr",
+                language="ar" if re.search(r"[\u0600-\u06ff]", clean) else "en",
                 anchor="rt",
                 stroke_width=1,
                 stroke_fill=(0, 0, 0),
@@ -729,7 +729,7 @@ def build_branded_fallback_asset(
         _strip_direction_controls(title).strip(),
     )
     if not clean_title:
-        clean_title = "تحديث تقني جديد"
+        clean_title = "Technology update"
 
     index = _variant_index(clean_title, variant_key)
     image = _load_card_background(index)

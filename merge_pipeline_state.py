@@ -48,9 +48,9 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def row_score(row: dict[str, Any]) -> tuple[int, int]:
+def row_score(row: dict[str, Any]) -> tuple[int, int, int]:
     truthy = sum(1 for value in row.values() if value not in (None, "", [], {}))
-    return truthy, len(json.dumps(row, ensure_ascii=False, sort_keys=True))
+    return int(row.get("editorial_version", 0)), truthy, len(json.dumps(row, ensure_ascii=False, sort_keys=True))
 
 
 def tid_key(row: dict[str, Any]) -> tuple[str, Any]:

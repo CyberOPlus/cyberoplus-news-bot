@@ -69,7 +69,7 @@ class PipelineReliabilityTests(unittest.TestCase):
                     ".github/workflows/telegram-collector.yml").read_text()
         for name, step_id in (
             ("Publish at most one eligible Facebook item before AI", "publish_before"),
-            ("Prepare every unprocessed item in Arabic", "prepare"),
+            ("Prepare every unprocessed item in English", "prepare"),
         ):
             step = workflow.split(f"- name: {name}", 1)[1].split("- name:", 1)[0]
             self.assertIn("continue-on-error: true", step)

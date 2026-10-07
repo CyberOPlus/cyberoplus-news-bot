@@ -15,8 +15,10 @@ class FacebookDeliveryTests(unittest.TestCase):
         row = {
             "telegram_id": 1800,
             "status": "ready",
+            "language": "en",
+            "source_published_at": publisher.now_iso(),
             "card_title": "",
-            "facebook_post": "أعلنت الشركة إتاحة تحديث أمني جديد.\n\nيتضمن إصلاحاً للثغرة المعلنة.",
+            "facebook_post": "The company announced a new security update.\n\nIt fixes the disclosed vulnerability.",
             "first_comment": "",
             "source_url": "",
             "media": {},
@@ -76,7 +78,7 @@ class FacebookDeliveryTests(unittest.TestCase):
                     mocks["resolve_post_images"].return_value = ([], {})
                     self.assertEqual(publisher.main(), 0)
                 mocks["build_branded_fallback_asset"].assert_called_once_with(
-                    "أعلنت الشركة إتاحة تحديث أمني جديد.", variant_key=1800
+                    "The company announced a new security update.", variant_key=1800
                 )
                 events = [call.args[0] for call in mocks["append_event"].call_args_list]
                 self.assertEqual(len(events), 1)
@@ -138,3 +140,21 @@ class FacebookDeliveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class QueueEligibilityTests(FacebookDeliveryTests):
+    def test_empty_legacy_row_does_not_block_valid_english_item(self):
+        valid=self.item()
+        empty=self.item(telegram_id=1750,facebook_post='',language='ar')
+        with self.delivery(valid) as mocks:
+            mocks['read_jsonl'].side_effect=lambda path: [empty,valid] if path==publisher.READY else []
+            self.assertEqual(publisher.main(),0)
+        mocks['publish_images'].assert_called_once()
+        self.assertTrue(any(c.args[0].get('event')=='editorial_hold' for c in mocks['append_event'].call_args_list))
+
+    def test_persistent_cooldown_prevents_even_verification_request(self):
+        from datetime import timedelta
+        with self.delivery(self.item()) as mocks:
+            mocks['read_jsonl'].return_value=[{'event':'meta_cooldown','retry_at':(publisher.now()+timedelta(minutes=10)).isoformat()}]
+            self.assertEqual(publisher.main(),0)
+        mocks['verify'].assert_not_called()
+        mocks['publish_images'].assert_not_called()

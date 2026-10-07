@@ -94,7 +94,7 @@ def decision() -> tuple[bool, str, dict]:
     published_ids = {
         int(row.get("telegram_id", 0) or 0)
         for row in events
-        if row.get("event") in {"published", "duplicate_skipped"}
+        if row.get("event") in {"published", "duplicate_skipped", "expired", "editorial_hold"}
         and int(row.get("telegram_id", 0) or 0) > 0
     }
     commented_ids = {

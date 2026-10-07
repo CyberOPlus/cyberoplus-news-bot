@@ -79,7 +79,7 @@ jobs:
           published = {
               int(row.get("telegram_id", 0) or 0)
               for row in events
-              if row.get("event") in {"published", "duplicate_skipped"}
+              if row.get("event") in {"published", "duplicate_skipped", "expired", "editorial_hold"}
           }
           pending = [
               row for row in ready
@@ -117,7 +117,7 @@ jobs:
           set -euo pipefail
           python facebook_publisher.py
 
-      - name: Prepare every unprocessed item in Arabic
+      - name: Prepare every unprocessed item in English
         id: prepare
         if: steps.probe.outputs.needs_run == 'true'
         # Existing AI-prepared items can still publish when preparation fails.
@@ -153,7 +153,7 @@ jobs:
           published = {
               int(row.get("telegram_id", 0) or 0)
               for row in events
-              if row.get("event") in {"published", "duplicate_skipped"}
+              if row.get("event") in {"published", "duplicate_skipped", "expired", "editorial_hold"}
           }
           pending = [
               row
@@ -255,13 +255,13 @@ jobs:
           echo "- Full pipeline ran: \`${{ steps.probe.outputs.needs_run }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Telegram collector: \`${{ steps.collect.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Facebook before AI: \`${{ steps.publish_before.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Arabic preparation: \`${{ steps.prepare.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- English preparation: \`${{ steps.prepare.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Facebook after AI: \`${{ steps.publish_after.outcome }}\`" >> "$GITHUB_STEP_SUMMARY"
           if [ "${{ steps.collect.outcome }}" = "failure" ]; then
             echo "::warning::Telegram collection failed; existing AI/Facebook queues continued and the next cycle will retry the source."
           fi
           echo "- Polling: continuous successor runs with a 60-second pause; 5-minute schedule is backup" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Queue policy: one priority item per publisher attempt; 5-minute minimum gap from config" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Queue policy: one priority item per publisher attempt; 30-minute minimum gap and rolling caps from config" >> "$GITHUB_STEP_SUMMARY"
           if [ "${{ steps.publish_before.outcome }}" = "failure" ] \
              || [ "${{ steps.prepare.outcome }}" = "failure" ] \
              || [ "${{ steps.publish_after.outcome }}" = "failure" ]; then
