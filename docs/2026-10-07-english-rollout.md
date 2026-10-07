@@ -67,3 +67,30 @@ Research reviewed again on 2026-10-07:
 These sources support measuring provenance and avoiding false verification
 claims. They do not establish a safe universal posting rate or prove performance
 for Cybero Plus.
+
+## Missing-date and sensitive-claim hold follow-up — 2026-10-07
+
+Production item 1796 arrived with a Telegram `time` element whose `datetime`
+attribute was absent. The collector converted that missing value to the literal
+string `"None"`. Freshness policy correctly refused publication, but the publisher
+did not make `unverified_source_date` terminal, so the item remained in the
+durable queue for every later run. The item was especially unsuitable for an
+unsourced exception: it describes a court ruling and an AI-generated likeness of
+a deceased victim.
+
+The collector now keeps absent dates as JSON null. The publisher records an
+`editorial_hold` for an unverifiable source date, retaining the row and reason for
+audit while excluding it from repeated delivery attempts. This does not infer a
+date from collection time and does not publish the item. A later explicitly
+versioned repair can still reintroduce it with verified metadata if policy allows.
+
+Research checked on 2026-10-07:
+- Reuters Fact Check methodology supports tracing claims to their origin and
+  linking public evidence rather than treating social discovery as verification.
+- Reuters' September 30 report and the published Arizona Court of Appeals opinion
+  independently support the underlying event. The court opinion is the stronger
+  primary record; this manual discovery is documented evidence for the decision,
+  not silently injected into automated copy.
+
+Offline regression coverage reproduces the malformed Telegram time element and
+the formerly lingering queue item. No live Facebook call is made.

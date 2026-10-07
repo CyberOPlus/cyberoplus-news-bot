@@ -257,7 +257,11 @@ def parse_messages(html: str) -> list[dict[str, Any]]:
         raw_text = text_node.get_text("\n", strip=True) if text_node else ""
 
         time_node = node.select_one("time")
-        published_at = str(time_node.get("datetime")) if time_node else None
+        published_raw = time_node.get("datetime") if time_node else None
+        # Never serialize a missing datetime as the truthy string ``"None"``.
+        # Freshness policy must be able to distinguish a verified timestamp
+        # from missing Telegram metadata.
+        published_at = str(published_raw).strip() if published_raw else None
 
         reply_to_id = None
         reply_node = node.select_one(".tgme_widget_message_reply[href]")

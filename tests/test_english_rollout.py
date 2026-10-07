@@ -10,6 +10,7 @@ import ai_batch_processor as batch
 import facebook_publisher as pub
 import news_policy as policy
 import source_enrichment as enrichment
+import telegram_collector as collector
 from merge_pipeline_state import merge_rows, tid_key
 
 class EnglishRolloutTests(unittest.TestCase):
@@ -54,6 +55,16 @@ class EnglishRolloutTests(unittest.TestCase):
         events=[dict(event='published',facebook_post_id=str(i),published_at=now.isoformat()) for i in range(2)]
         self.assertEqual(policy.eligibility(item,events,now),'rolling_hourly_cap')
         self.assertEqual(policy.eligibility(item,events[:1]*3,now),'')
+
+    def test_collector_keeps_missing_datetime_as_null_not_string_none(self):
+        rows = collector.parse_messages('''
+        <div class="tgme_widget_message" data-post="IntCyberDigest/1796">
+          <div class="tgme_widget_message_text">A sourced date is unavailable.</div>
+          <time></time>
+        </div>
+        ''')
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]['published_at'])
 
     def test_migration_preserves_new_english_even_if_arabic_row_is_larger(self):
         old=dict(telegram_id=1,facebook_post='a'*1000,language='ar')

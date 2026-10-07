@@ -158,3 +158,15 @@ class QueueEligibilityTests(FacebookDeliveryTests):
             self.assertEqual(publisher.main(),0)
         mocks['verify'].assert_not_called()
         mocks['publish_images'].assert_not_called()
+
+    def test_missing_source_date_enters_terminal_hold_instead_of_lingering(self):
+        undated = self.item(telegram_id=1796, source_published_at='None')
+        with self.delivery(undated) as mocks:
+            self.assertEqual(publisher.main(), 0)
+        mocks['publish_images'].assert_not_called()
+        events = [call.args[0] for call in mocks['append_event'].call_args_list]
+        self.assertTrue(any(
+            event.get('event') == 'editorial_hold'
+            and event.get('reason') == 'unverified_source_date'
+            for event in events
+        ))
