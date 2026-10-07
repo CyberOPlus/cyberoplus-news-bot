@@ -66,6 +66,23 @@ class EnglishRolloutTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIsNone(rows[0]['published_at'])
 
+    def test_sensitive_claim_requires_public_source_link(self):
+        now = datetime.now(timezone.utc)
+        item = dict(
+            language='en', source_published_at=now.isoformat(),
+            facebook_post='A federal judge ruled the warrantless search unconstitutional.',
+            card_title='Judge rules on database search', source_url='',
+            primary_evidence=[],
+        )
+        self.assertEqual(
+            policy.eligibility(item, [], now),
+            'sensitive_claim_without_source',
+        )
+        linked = dict(item, source_url='https://www.justice.gov/example')
+        self.assertEqual(policy.eligibility(linked, [], now), '')
+        ordinary = dict(item, facebook_post='A vendor released a security update.', card_title='Security update')
+        self.assertEqual(policy.eligibility(ordinary, [], now), '')
+
     def test_migration_preserves_new_english_even_if_arabic_row_is_larger(self):
         old=dict(telegram_id=1,facebook_post='a'*1000,language='ar')
         new=dict(telegram_id=1,facebook_post='Short English.',language='en',editorial_version=2)

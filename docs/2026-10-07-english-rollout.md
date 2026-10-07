@@ -94,3 +94,32 @@ Research checked on 2026-10-07:
 
 Offline regression coverage reproduces the malformed Telegram time element and
 the formerly lingering queue item. No live Facebook call is made.
+
+## Sensitive-claim source gate — 2026-10-07
+
+Page evidence after the observability change showed that item 1801, a federal
+court claim, was published as `discovery_attribution_only`. Item 1803 then entered
+the ready queue with an allegation against a named person and a $10 million U.S.
+government reward, also without a link. This is page-specific evidence of a gap,
+not an assumption based on another account's performance.
+
+Facebook delivery now requires a public source link or stored primary excerpt for
+captions containing court/criminal-process, wanted-person, allegation or reward
+language. An unsourced match enters a durable `editorial_hold`; ordinary product
+and technical updates are unaffected. This is a narrow harm-control gate, not a
+claim that every matching report is false.
+
+Before activation, item 1803 was enriched with the official U.S. Rewards for
+Justice page and a bounded excerpt supporting the reward, identity and attributed
+allegations. The existing English AI caption was retained; the source is restored
+as a first comment and recorded as primary evidence. The supporting DOJ release
+also states that an indictment is an allegation and the defendant is presumed
+innocent unless convicted.
+
+Research checked on 2026-10-07:
+- https://rewardsforjustice.net/rewards/zhang-yu-sssb/
+- https://www.justice.gov/opa/pr/justice-department-announces-arrest-prolific-chinese-state-sponsored-contract-hacker
+- https://www.reuters.com/business/media-telecom/what-is-visual-verification-why-does-reuters-practice-it-2026-08-28/
+
+Offline tests cover a blocked court claim, an allowed linked claim and an ordinary
+update. No live Facebook test was sent.

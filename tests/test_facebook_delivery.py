@@ -170,3 +170,19 @@ class QueueEligibilityTests(FacebookDeliveryTests):
             and event.get('reason') == 'unverified_source_date'
             for event in events
         ))
+
+    def test_unsourced_sensitive_claim_enters_terminal_hold(self):
+        claim = self.item(
+            telegram_id=1803,
+            facebook_post='The government announced a $10 million reward for an alleged hacker.',
+            card_title='Government reward announced',
+        )
+        with self.delivery(claim) as mocks:
+            self.assertEqual(publisher.main(), 0)
+        mocks['publish_images'].assert_not_called()
+        events = [call.args[0] for call in mocks['append_event'].call_args_list]
+        self.assertTrue(any(
+            event.get('event') == 'editorial_hold'
+            and event.get('reason') == 'sensitive_claim_without_source'
+            for event in events
+        ))

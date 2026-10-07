@@ -7,6 +7,15 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 EDITORIAL_VERSION = 2
 
+# Claims about courts, criminal process, wanted people and government rewards
+# can cause disproportionate harm if a discovery-channel post is wrong or
+# missing context. Require a public evidence link before Facebook delivery.
+SENSITIVE_CLAIM_RE = re.compile(
+    r'(?i)\b(?:court|judge|judicial|warrant|indict(?:ed|ment)?|arrest(?:ed)?|'
+    r'charg(?:ed|es?)|convict(?:ed|ion)?|sentenc(?:ed|e)|lawsuit|sued|'
+    r'wanted|reward|bounty|alleg(?:ed|edly|ation)|accus(?:ed|ation))\b'
+)
+
 def config():
     return json.loads((ROOT / 'config/timing_strategy.json').read_text())
 
@@ -28,11 +37,24 @@ def timestamp(value):
     except (TypeError, ValueError):
         return None
 
+def sensitive_claim_needs_source(item):
+    text = ' '.join(str(item.get(key) or '') for key in ('facebook_post', 'card_title'))
+    if not SENSITIVE_CLAIM_RE.search(text):
+        return False
+    if str(item.get('source_url') or '').strip():
+        return False
+    return not any(
+        isinstance(row, dict) and str(row.get('url') or '').strip()
+        for row in (item.get('primary_evidence') or [])
+    )
+
 def eligibility(item, events, current=None):
     current = current or datetime.now(timezone.utc)
     policy = config()['publishing_policy']
     if english_enabled() and item.get('language') != 'en':
         return 'pending_english_rewrite'
+    if sensitive_claim_needs_source(item):
+        return 'sensitive_claim_without_source'
     published = timestamp(item.get('source_published_at'))
     if not published or published > current + timedelta(minutes=5):
         return 'unverified_source_date'

@@ -542,7 +542,7 @@ def main() -> int:
             reason = eligibility(row, events, now())
             if not str(row.get("facebook_post") or "").strip():
                 reason = "missing_editorial_text"
-            if reason in {"stale_source", "missing_editorial_text", "unverified_source_date"}:
+            if reason in {"stale_source", "missing_editorial_text", "unverified_source_date", "sensitive_claim_without_source"}:
                 append_event({"event": "expired" if reason == "stale_source" else "editorial_hold",
                               "telegram_id": row["telegram_id"], "reason": reason, "held_at": now_iso()})
             if not reason:
