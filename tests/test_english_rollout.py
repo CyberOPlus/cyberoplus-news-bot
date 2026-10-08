@@ -123,6 +123,30 @@ class EnglishRolloutTests(unittest.TestCase):
         )
         self.assertEqual(policy.eligibility(product, [], now), '')
 
+    def test_unsupported_low_information_claim_is_held(self):
+        now = datetime.now(timezone.utc)
+        item = dict(
+            language='en', source_published_at=now.isoformat(),
+            facebook_post=(
+                'A Telegram message claimed "genetics shaping the world" '
+                'without any supporting evidence or context.'
+            ),
+            card_title='Unverified genetics claim', source_url='',
+            primary_evidence=[], editorial={'certainty': 'uncertain'},
+        )
+        self.assertEqual(
+            policy.eligibility(item, [], now),
+            'unsupported_low_information_claim',
+        )
+        linked = dict(item, source_url='https://example.org/research')
+        self.assertEqual(policy.eligibility(linked, [], now), '')
+        substantive = dict(
+            item,
+            facebook_post='A vendor said an investigation remains ongoing.',
+            card_title='Vendor investigates service disruption',
+        )
+        self.assertEqual(policy.eligibility(substantive, [], now), '')
+
     def test_migration_preserves_new_english_even_if_arabic_row_is_larger(self):
         old=dict(telegram_id=1,facebook_post='a'*1000,language='ar')
         new=dict(telegram_id=1,facebook_post='Short English.',language='en',editorial_version=2)

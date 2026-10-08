@@ -39,6 +39,17 @@ DISPUTE_MARKER_RE = re.compile(
     r'unclear whether|unconfirmed|conflicting reports?)\b'
 )
 
+# AI copy that merely says a discovery-channel message is unsupported is not a
+# useful news item. Keep this deliberately limited to explicit missing-evidence
+# wording; ordinary attributed uncertainty remains eligible.
+UNSUPPORTED_LOW_INFORMATION_RE = re.compile(
+    r'(?i)(?:\bwithout (?:any )?(?:supporting )?'
+    r'(?:evidence|context|details|source)\b|'
+    r'\b(?:provided|offered|included|gave) no (?:supporting )?'
+    r'(?:evidence|context|verifiable details|source)\b|'
+    r'\bunverified (?:claim|report|message|post)\b)'
+)
+
 def config():
     return json.loads((ROOT / 'config/timing_strategy.json').read_text())
 
@@ -95,6 +106,10 @@ def disputed_intrusion_needs_source(item):
         and not has_public_source(item)
     )
 
+def unsupported_low_information_needs_hold(item):
+    text = ' '.join(str(item.get(key) or '') for key in ('facebook_post', 'card_title'))
+    return bool(UNSUPPORTED_LOW_INFORMATION_RE.search(text) and not has_public_source(item))
+
 def eligibility(item, events, current=None):
     current = current or datetime.now(timezone.utc)
     policy = config()['publishing_policy']
@@ -106,6 +121,8 @@ def eligibility(item, events, current=None):
         return 'competition_result_without_source'
     if disputed_intrusion_needs_source(item):
         return 'disputed_intrusion_without_source'
+    if unsupported_low_information_needs_hold(item):
+        return 'unsupported_low_information_claim'
     published = timestamp(item.get('source_published_at'))
     if not published or published > current + timedelta(minutes=5):
         return 'unverified_source_date'

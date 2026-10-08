@@ -156,6 +156,38 @@ posts plus exact-host validation. The already-published post was not edited or
 republished because there is no tested, idempotent correction workflow; no live
 Facebook test was sent.
 
+## Unsupported low-information claim hold — 2026-10-08
+
+Production item 1808 was published as `discovery_attribution_only`. Its entire
+caption said that a Telegram message claimed “genetics shaping the world” without
+supporting evidence or context; the card title called it an unverified claim.
+That is page-specific evidence of an editorial failure: the rewrite described
+the absence of a verifiable story instead of producing useful, attributable news.
+
+Future unsourced captions that explicitly say a claim, message or post is
+unverified or lacks evidence, context, details or a source now enter a durable
+`editorial_hold`. The rule is intentionally narrow and does not reject ordinary
+attributed uncertainty. A real public source link also prevents this specific
+hold, while the existing claim-specific checks continue to apply independently.
+
+Research checked on 2026-10-08:
+- https://reutersagency.com/about/standards-values/ says online material should
+  not be used unless it is sourced so its origin can be verified, and recommends
+  cross-checking information wherever possible.
+- https://www.ap.org/about/news-values-and-principles/news-values-introduction/
+  says AP does not knowingly introduce rumor or false information and strives to
+  identify its sources.
+- https://www.ap.org/about/news-values-and-principles/telling-the-story/ says
+  stories should be held while additional confirmation or elaboration is sought
+  when source material is insufficient.
+
+An exact web search for the quoted phrase did not identify a primary source.
+That search result is not proof the claim is false; it supports holding the item
+until a source and actual news context exist. Offline tests reproduce item 1808,
+allow a linked version and preserve a substantive uncertain update. The already
+published item was not edited, deleted or reposted; no live Facebook test was
+sent.
+
 ## Disputed cyber-intrusion source gate — 2026-10-08
 
 Production item 1806 was published as `discovery_attribution_only`. Its caption
