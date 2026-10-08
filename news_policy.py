@@ -16,6 +16,17 @@ SENSITIVE_CLAIM_RE = re.compile(
     r'wanted|reward|bounty|alleg(?:ed|edly|ation)|accus(?:ed|ation))\b'
 )
 
+# Competitive security-event result posts commonly contain many precise claims
+# (success/failure, payout, bug count and affected target) in a compact caption.
+# Discovery-channel attribution alone is not enough to validate that scoreboard.
+SECURITY_COMPETITION_RE = re.compile(
+    r'(?i)\b(?:pwn2own|hacking competition|security competition|bug bounty contest)\b'
+)
+COMPETITION_RESULT_RE = re.compile(
+    r'(?i)\b(?:result(?:s)?|successful|success|failed|failure|won|earned|payout|'
+    r'prize|compromised|hacked|exploit(?:ed)?)\b'
+)
+
 def config():
     return json.loads((ROOT / 'config/timing_strategy.json').read_text())
 
@@ -48,6 +59,22 @@ def sensitive_claim_needs_source(item):
         for row in (item.get('primary_evidence') or [])
     )
 
+def has_public_source(item):
+    if str(item.get('source_url') or '').strip():
+        return True
+    return any(
+        isinstance(row, dict) and str(row.get('url') or '').strip()
+        for row in (item.get('primary_evidence') or [])
+    )
+
+def competition_result_needs_source(item):
+    text = ' '.join(str(item.get(key) or '') for key in ('facebook_post', 'card_title'))
+    return bool(
+        SECURITY_COMPETITION_RE.search(text)
+        and COMPETITION_RESULT_RE.search(text)
+        and not has_public_source(item)
+    )
+
 def eligibility(item, events, current=None):
     current = current or datetime.now(timezone.utc)
     policy = config()['publishing_policy']
@@ -55,6 +82,8 @@ def eligibility(item, events, current=None):
         return 'pending_english_rewrite'
     if sensitive_claim_needs_source(item):
         return 'sensitive_claim_without_source'
+    if competition_result_needs_source(item):
+        return 'competition_result_without_source'
     published = timestamp(item.get('source_published_at'))
     if not published or published > current + timedelta(minutes=5):
         return 'unverified_source_date'

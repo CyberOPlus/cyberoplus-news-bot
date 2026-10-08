@@ -123,3 +123,35 @@ Research checked on 2026-10-07:
 
 Offline tests cover a blocked court claim, an allowed linked claim and an ordinary
 update. No live Facebook test was sent.
+
+## Security-competition result source gate — 2026-10-08
+
+Production item 1804 was published as `discovery_attribution_only`. It summarized
+Pwn2Own Ireland day-two results, including precise success, payout and bug-count
+claims. The official Zero Day Initiative result page supports several core facts,
+but it does not plainly state the caption's broad conclusion that more than half
+of attempts reused known bugs. Its “DOOMsday” wording and hashtag also do not, by
+themselves, establish the caption's literal claim that a Lexmark printer ran DOOM.
+
+Future security-competition result captions now require a public source URL or
+stored evidence before delivery. Unsourced matches enter a durable editorial
+hold. The gate is deliberately narrow: it requires both competition context and
+result language, so unrelated vendor updates are unaffected. Zero Day Initiative
+was added to the exact HTTPS primary-host allowlist for explicit links already
+present in discovery posts; this does not turn its blog into a new feed or infer
+facts from URL slugs.
+
+Research checked on 2026-10-08:
+- https://www.zerodayinitiative.com/blog/2026/10/7/pwn2own-ireland-2026-day-two-results
+  (official event result log; retrieved 2026-10-08).
+- https://www.zerodayinitiative.com/blog
+  (official index confirms the dated result entry; retrieved 2026-10-08).
+- https://creativecommons.org/licenses/by/4.0/deed.en
+  (reuse requires attribution, a license link and change disclosure; no image
+  reuse change was made because the Telegram image's license was not established).
+
+This is a factual-quality safeguard, not an engagement experiment and not a claim
+about the page's best posting time. Offline tests cover blocked and linked result
+posts plus exact-host validation. The already-published post was not edited or
+republished because there is no tested, idempotent correction workflow; no live
+Facebook test was sent.

@@ -83,6 +83,22 @@ class EnglishRolloutTests(unittest.TestCase):
         ordinary = dict(item, facebook_post='A vendor released a security update.', card_title='Security update')
         self.assertEqual(policy.eligibility(ordinary, [], now), '')
 
+    def test_security_competition_results_require_public_source(self):
+        now = datetime.now(timezone.utc)
+        item = dict(
+            language='en', source_published_at=now.isoformat(),
+            facebook_post='Pwn2Own results included a successful exploit and a $40,000 payout.',
+            card_title='Pwn2Own day two results', source_url='', primary_evidence=[],
+        )
+        self.assertEqual(
+            policy.eligibility(item, [], now),
+            'competition_result_without_source',
+        )
+        linked = dict(item, source_url='https://www.zerodayinitiative.com/blog/results')
+        self.assertEqual(policy.eligibility(linked, [], now), '')
+        unrelated = dict(item, facebook_post='A vendor released a successful security update.', card_title='Update')
+        self.assertEqual(policy.eligibility(unrelated, [], now), '')
+
     def test_migration_preserves_new_english_even_if_arabic_row_is_larger(self):
         old=dict(telegram_id=1,facebook_post='a'*1000,language='ar')
         new=dict(telegram_id=1,facebook_post='Short English.',language='en',editorial_version=2)
@@ -91,6 +107,7 @@ class EnglishRolloutTests(unittest.TestCase):
 
     def test_only_exact_https_primary_hosts(self):
         self.assertTrue(enrichment.primary_url('https://www.cisa.gov/news'))
+        self.assertTrue(enrichment.primary_url('https://www.zerodayinitiative.com/blog/results'))
         for url in ['https://www.cisa.gov.evil.test/news','http://www.cisa.gov/news','https://user@www.cisa.gov/news','http://127.0.0.1','https://www.cisa.gov:999/a']:
             self.assertFalse(enrichment.primary_url(url))
 
