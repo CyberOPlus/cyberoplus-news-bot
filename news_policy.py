@@ -27,6 +27,18 @@ COMPETITION_RESULT_RE = re.compile(
     r'prize|compromised|hacked|exploit(?:ed)?)\b'
 )
 
+# A disputed or hedged cyber-intrusion report needs a link readers can inspect.
+# Keep the co-occurrence requirement narrow so ordinary vendor product claims do
+# not enter a hold merely because they use the word "claim".
+CYBER_INTRUSION_RE = re.compile(
+    r'(?i)\b(?:hack(?:ed|ing)?|breach(?:ed)?|compromis(?:ed|e)|intrusion|'
+    r'unauthori[sz]ed access|infiltrat(?:ed|ion))\b'
+)
+DISPUTE_MARKER_RE = re.compile(
+    r'(?i)\b(?:claim surfaced|disputed|denied|does not believe|did not believe|'
+    r'unclear whether|unconfirmed|conflicting reports?)\b'
+)
+
 def config():
     return json.loads((ROOT / 'config/timing_strategy.json').read_text())
 
@@ -75,6 +87,14 @@ def competition_result_needs_source(item):
         and not has_public_source(item)
     )
 
+def disputed_intrusion_needs_source(item):
+    text = ' '.join(str(item.get(key) or '') for key in ('facebook_post', 'card_title'))
+    return bool(
+        CYBER_INTRUSION_RE.search(text)
+        and DISPUTE_MARKER_RE.search(text)
+        and not has_public_source(item)
+    )
+
 def eligibility(item, events, current=None):
     current = current or datetime.now(timezone.utc)
     policy = config()['publishing_policy']
@@ -84,6 +104,8 @@ def eligibility(item, events, current=None):
         return 'sensitive_claim_without_source'
     if competition_result_needs_source(item):
         return 'competition_result_without_source'
+    if disputed_intrusion_needs_source(item):
+        return 'disputed_intrusion_without_source'
     published = timestamp(item.get('source_published_at'))
     if not published or published > current + timedelta(minutes=5):
         return 'unverified_source_date'

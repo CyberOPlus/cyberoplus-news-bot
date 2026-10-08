@@ -99,6 +99,30 @@ class EnglishRolloutTests(unittest.TestCase):
         unrelated = dict(item, facebook_post='A vendor released a successful security update.', card_title='Update')
         self.assertEqual(policy.eligibility(unrelated, [], now), '')
 
+    def test_disputed_intrusion_requires_public_source(self):
+        now = datetime.now(timezone.utc)
+        item = dict(
+            language='en', source_published_at=now.isoformat(),
+            facebook_post=(
+                'A claim surfaced that an AI agent hacked a government portal. '
+                'The company said it does not believe AI was involved.'
+            ),
+            card_title='AI-written warning claim disputed', source_url='',
+            primary_evidence=[],
+        )
+        self.assertEqual(
+            policy.eligibility(item, [], now),
+            'disputed_intrusion_without_source',
+        )
+        linked = dict(item, source_url='https://www.pm.gov.au/media/statement')
+        self.assertEqual(policy.eligibility(linked, [], now), '')
+        product = dict(
+            item,
+            facebook_post='Microsoft claims its new laptop is twice as fast.',
+            card_title='Microsoft laptop benchmark claim',
+        )
+        self.assertEqual(policy.eligibility(product, [], now), '')
+
     def test_migration_preserves_new_english_even_if_arabic_row_is_larger(self):
         old=dict(telegram_id=1,facebook_post='a'*1000,language='ar')
         new=dict(telegram_id=1,facebook_post='Short English.',language='en',editorial_version=2)
@@ -108,6 +132,7 @@ class EnglishRolloutTests(unittest.TestCase):
     def test_only_exact_https_primary_hosts(self):
         self.assertTrue(enrichment.primary_url('https://www.cisa.gov/news'))
         self.assertTrue(enrichment.primary_url('https://www.zerodayinitiative.com/blog/results'))
+        self.assertTrue(enrichment.primary_url('https://www.pm.gov.au/media/statement'))
         for url in ['https://www.cisa.gov.evil.test/news','http://www.cisa.gov/news','https://user@www.cisa.gov/news','http://127.0.0.1','https://www.cisa.gov:999/a']:
             self.assertFalse(enrichment.primary_url(url))
 

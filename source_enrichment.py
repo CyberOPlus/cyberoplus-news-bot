@@ -12,6 +12,7 @@ PRIMARY_HOSTS = {'www.cisa.gov', 'cisa.gov', 'cert.europa.eu', 'cert.ssi.gouv.fr
     'blog.google', 'www.mozilla.org', 'www.cve.org', 'www.circl.lu',
     'www.jpcert.or.jp', 'www.csa.gov.sg', 'www.cyber.gov.au', 'www.cert-in.org.in'}
 PRIMARY_HOSTS.add('www.zerodayinitiative.com')
+PRIMARY_HOSTS.add('www.pm.gov.au')
 
 def primary_url(url):
     try:

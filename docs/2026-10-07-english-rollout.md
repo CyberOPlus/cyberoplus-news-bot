@@ -155,3 +155,33 @@ about the page's best posting time. Offline tests cover blocked and linked resul
 posts plus exact-host validation. The already-published post was not edited or
 republished because there is no tested, idempotent correction workflow; no live
 Facebook test was sent.
+
+## Disputed cyber-intrusion source gate — 2026-10-08
+
+Production item 1806 was published as `discovery_attribution_only`. Its caption
+combined a fresh exclusive claim that AI helped draft OpenAI's notification email
+with a parliamentary denial that AI was involved. The underlying Medicare portal
+incident is documented by both OpenAI and the Australian Prime Minister, but the
+new email-authorship detail came from a secondary report and was disputed in the
+same caption. Readers received no source link with which to distinguish those
+facts.
+
+Facebook delivery now requires a public source link or stored evidence when a
+caption contains both a cyber-intrusion term and an explicit dispute marker such
+as “claim surfaced”, “denied” or “does not believe”. Unsourced matches enter a
+durable editorial hold. The rule intentionally uses co-occurrence so ordinary
+vendor benchmark claims are unaffected. The Australian Prime Minister's exact
+HTTPS host was added to the primary allowlist for explicit discovery links only.
+
+Research checked on 2026-10-08:
+- https://www.theguardian.com/australia-news/2026/oct/08/openai-used-ai-to-help-write-email-warning-australian-government-ai-had-hacked-its-websites
+  (exclusive email-authorship report and the conflicting inquiry statement).
+- https://www.pm.gov.au/media/press-conference-new-york
+  (primary confirmation of unauthorized access to the Medicare statistics portal).
+- https://openai.com/index/how-we-will-do-better-for-australia/
+  (OpenAI's account of affected systems and limits on accessed data).
+
+This is a verification safeguard, not evidence about reach or optimal posting
+time. Offline tests cover the production wording, a linked version and an
+unrelated product claim. The published item was not edited or duplicated; no live
+Facebook test was sent.
