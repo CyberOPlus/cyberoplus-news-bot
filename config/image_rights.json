@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "default_status": "unknown",
+  "policy": {
+    "mode": "strict",
+    "note": "A public Telegram attachment or Open Graph image is not reuse permission. Only explicit, reviewed ownership, license, or permission rules may authorize reuse. Licensed images require an HTTPS license URL and creator credit."
+  },
+  "channel_policies": {},
+  "post_overrides": {}
+}
