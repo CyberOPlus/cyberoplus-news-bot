@@ -1,13 +1,9 @@
 #!/usr/bin/env python3
-"""High-quality image selection for Cybero Plus Facebook posts.
+"""Rights-aware, high-quality image selection for Cybero Plus Facebook posts.
 
-Priority:
-1) Real image(s) attached to the Telegram post.
-2) If Telegram has no usable image, fetch the original external source and
-   choose the highest-quality article/OG image.
-
-Images are downloaded and validated before Facebook upload so broken, tiny,
-logo/icon/avatar and tracking images are filtered out.
+Only explicitly approved Telegram or linked-source images are eligible. Unknown
+rights fall back to the publisher's owned branded card. Eligible files are
+validated for dimensions, format and quality before Facebook upload.
 """
 
 from __future__ import annotations
@@ -302,51 +298,52 @@ def resolve_post_images(
     telegram_urls: list[str],
     source_url: str,
     max_images: int = 10,
+    *,
+    allow_telegram_images: bool = False,
+    allow_source_images: bool = False,
 ) -> tuple[list[ImageAsset], dict[str, Any]]:
-    """Return validated high-quality images plus diagnostics."""
-
+    """Return quality-checked images only when reuse permission is explicit."""
     diagnostics: dict[str, Any] = {
         "telegram_candidates": len(telegram_urls),
         "source_fallback_used": False,
         "source_candidates": 0,
         "selected": [],
+        "rights_gate": {
+            "telegram_reuse_allowed": bool(allow_telegram_images),
+            "source_reuse_allowed": bool(allow_source_images),
+        },
+        "telegram_skipped_by_rights": not bool(allow_telegram_images),
+        "source_skipped_by_rights": bool(source_url and not allow_source_images),
     }
 
     telegram_assets: list[ImageAsset] = []
-    for url in telegram_urls[:max_images * 2]:
-        asset = fetch_image(url, "telegram")
-        if asset:
-            telegram_assets.append(asset)
+    if allow_telegram_images:
+        for url in telegram_urls[:max_images * 2]:
+            asset = fetch_image(url, "telegram")
+            if asset:
+                telegram_assets.append(asset)
 
-    # Respect the Telegram post's own visuals when they exist and are usable.
+    # Reuse Telegram attachments only when an explicit rights decision permits it.
     if telegram_assets:
         telegram_assets.sort(key=lambda asset: asset.score, reverse=True)
         chosen = telegram_assets[:max_images]
         diagnostics["selected"] = [
-            {
-                "origin": a.origin,
-                "width": a.width,
-                "height": a.height,
-                "url": a.url,
-            }
+            {"origin": a.origin, "width": a.width, "height": a.height, "url": a.url}
             for a in chosen
         ]
         return chosen, diagnostics
 
-    # No usable Telegram image: inspect the original external source.
-    if source_url:
+    # Source-page images have a separate rights scope from Telegram attachments.
+    if source_url and allow_source_images:
         diagnostics["source_fallback_used"] = True
         candidates = source_image_candidates(source_url)
         diagnostics["source_candidates"] = len(candidates)
-
         assets: list[ImageAsset] = []
         for url in candidates[:20]:
             asset = fetch_image(url, "source", referer=source_url)
             if asset:
                 assets.append(asset)
-
         if assets:
-            # Only one source image: choose the best article hero, not a gallery dump.
             best = max(assets, key=lambda asset: asset.score)
             diagnostics["selected"] = [{
                 "origin": best.origin,
@@ -355,7 +352,6 @@ def resolve_post_images(
                 "url": best.url,
             }]
             return [best], diagnostics
-
     return [], diagnostics
 
 

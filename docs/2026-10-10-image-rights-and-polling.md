@@ -1,34 +1,32 @@
 # Image-rights gate and continuous polling review — 2026-10-10
 
-## Scope and observed production state
+## Status: review branch only
 
-Reviewed the current `main` branch, `AGENTS.md`, publisher workflow, image resolver, video-rights policy, durable queues, publication-event history, and recent workflow logs on 2026-10-10.
+This document and its helper files are a proposal on `maintenance/image-rights-and-polling-2026-10-10`; they are **not active on `main`**. The live publisher and workflow were not modified. Do not merge this branch until the production publisher passes origin-specific rights decisions into the resolver, credits are tested end to end, the polling helper is wired into the workflow, and the offline suite passes.
 
-The production workflow log showed a successor dispatch approximately every 72 seconds from 15:04 to 15:23 UTC, despite `config/timing_strategy.json` specifying `continuous_poll_minutes: 5`. The runs were mostly successful and idle; this was unnecessary action churn, not evidence of Facebook post spam. The existing publisher still enforces one item per attempt, a 30-minute minimum gap, and rolling caps of two posts per hour and twelve per 24 hours.
+## Observed production state
 
-The current image resolver selected Telegram attachments first and otherwise scraped Open Graph/article images. Unlike `video_rights.py`, it did not require ownership, license, or reuse-permission evidence for images. Public availability and an OG tag are not permission to republish.
+The production workflow log showed successor dispatches approximately every 72 seconds from 15:04 to 15:23 UTC on 2026-10-10, despite `config/timing_strategy.json` specifying `continuous_poll_minutes: 5`. Recent runs were successful and mostly idle; this is unnecessary action churn, not evidence of Facebook post spam. The current publisher policy separately limits publication to one item per attempt, a 30-minute minimum gap, two posts per rolling hour, and twelve per rolling 24 hours.
+
+The current image resolver prefers Telegram attachments and otherwise scrapes article/Open Graph images. Unlike `video_rights.py`, it does not require evidence of ownership, licensing, or permission for images. Public availability or an Open Graph tag is not permission to republish.
 
 ## Research checked on 2026-10-10
 
-- Meta, **Rewarding Original Creators on Facebook**, 2026-03-13: https://about.fb.com/news/2026/03/rewarding-original-creators-on-facebook/  
-  Meta says it prioritizes original content and deprioritizes duplicative posts or low-value edits. This is primary platform guidance, not a guarantee of reach for Cybero Plus.
-- Meta, **Reducing Spammy Content on Facebook**, 2025-04-24: https://about.fb.com/news/2025/04/reducing-spammy-content-on-facebook/  
-  Meta describes reduced distribution/monetization for repetitive spam, unrelated captions, and excessive hashtags. This does not establish a universally safe posting cadence.
-- Wikimedia Commons, **Reusing content outside Wikimedia**: https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia/licenses/en  
-  The license is attached to each file and may require attribution and a license link; reusers must verify the individual file's terms.
-- PostFast, **Best Time to Post Social Media in 2026: 61,008 Posts Scored Against Their Own Normal**, published 2026-09-06: https://postfa.st/blog/best-time-to-post-social-media-data-report  
-  This published platform/workspace dataset reports smaller timing effects after comparing posts with each account's own baseline. It is not Meta data and does not measure this Page.
-- Adobe Express, **Facebook posting-time study**, published 2025-11-11: https://www.adobe.com/express/learn/blog/best-time-to-post-on-facebook  
-  This study analyzed over 40,000 posts from top creators. Its sample differs from PostFast's; descriptive timing associations are not proof that changing the schedule causes higher reach.
+- Meta, **Rewarding Original Creators on Facebook**, 2026-03-13: https://about.fb.com/news/2026/03/rewarding-original-creators-on-facebook/ — primary platform guidance says original content is prioritized and duplicative posts or low-value edits may be deprioritized. This is not a reach guarantee for Cybero Plus.
+- Meta, **Reducing Spammy Content on Facebook**, 2025-04-24: https://about.fb.com/news/2025/04/reducing-spammy-content-on-facebook/ — repetitive spam, unrelated captions, and excessive hashtags can reduce distribution/monetization; this does not define a universal safe posting cadence.
+- Wikimedia Commons, **Reusing content outside Wikimedia**: https://commons.wikimedia.org/wiki/Commons:Reusing_content_outside_Wikimedia/licenses/en — licensing is file-specific and may require creator attribution and a license link.
+- PostFast, **Best Time to Post Social Media in 2026: 61,008 Posts Scored Against Their Own Normal**, published 2026-09-06: https://postfa.st/blog/best-time-to-post-social-media-data-report — a platform/workspace dataset reports smaller timing effects when each account is compared with its own baseline. It is not Meta data and does not measure this Page.
+- Adobe Express, **Facebook posting-time study**, published 2025-11-11: https://www.adobe.com/express/learn/blog/best-time-to-post-on-facebook — its sample of 40,000+ posts differs from PostFast's, so the results are descriptive and not proof of causation or a best time for this Page.
 
-## Decisions and hypotheses
+## Proposed changes
 
-1. **Image rights:** Treat each origin separately. Telegram attachments and linked-source images are denied by default. Reuse is enabled only by a reviewed post/channel rule or explicit non-AI `media.image_rights` metadata. A licensed rule requires an HTTPS license URL and creator credit; a permission rule requires an HTTPS permission/license reference. Required credit/license details are appended to the first comment. When rights are unknown, the publisher uses the existing owned branded card with the AI-written English title; it does not fabricate an event photograph.
-2. **Polling:** Pace the continuous successor against the configured five-minute start-to-start interval, rather than sleeping a fixed 60 seconds after each run. If processing itself exceeds five minutes, the successor can continue immediately. Keep the existing five-minute cron and watchdog as recovery paths.
-3. **Scheduling/growth:** Do not change the 30-minute gap, rolling caps, or post-time strategy in this review. Published timing studies conflict and no Page-specific post-level metrics were available in the inspected state. Another account's data is not a valid claim about this Page's best time.
+1. The proposed image-rights helper denies reuse by default and separates Telegram attachments from linked-source images. It requires explicit reviewed permission; licensed images need an HTTPS license URL and creator credit. The resolver interface accepts explicit per-origin allow decisions, and a branded fallback card avoids fabricating a real-event photograph.
+2. The proposed polling helper targets the configured five-minute start-to-start interval, accounting for work already spent in a run. The live workflow still has its current fixed 60-second pause until that integration is approved and applied.
+3. No timing, publication-cap, hashtag, or freshness settings were changed. The studies conflict and no page-specific post-level metrics were available, so external benchmarks do not justify changing this Page's schedule.
 
-## Verification plan
+## Required verification before production use
 
-- Offline tests cover default-deny image rights, required license metadata, origin separation, image-download suppression, image-credit comments, and start-to-start polling math.
-- The test-only workflow has no Facebook secrets and makes no live post. A green offline suite verifies local logic only; it does not prove Meta or AI provider availability, legal ownership of a specific existing image, or future reach.
-- Existing published posts are not edited or deleted automatically. This change governs future reuse; previously published images should be reviewed separately if permission is uncertain.
+- Integrate rights decisions into `facebook_publisher.py`; verify an unknown-rights image always falls back and an explicitly licensed image adds its creator/license attribution to the first comment.
+- Wire `continuous_pacing.py` into the production workflow and verify the five-minute start-to-start behavior without delaying a run that already took longer than five minutes.
+- Run `python -m unittest discover -s tests -v` and `python validate_pipeline.py` in an offline-only workflow with no Facebook secrets.
+- Do not run a live Facebook test post. Existing published posts are not edited or deleted by this proposal; any previously used image with uncertain permission requires separate review.
