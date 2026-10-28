@@ -313,3 +313,4 @@
 {"event": "editorial_hold", "telegram_id": 2151, "reason": "sensitive_claim_without_source", "held_at": "2026-10-28T16:52:59.040094+00:00"}
 {"event": "expired", "telegram_id": 2103, "reason": "stale_source", "held_at": "2026-10-28T16:55:39.131927+00:00"}
 {"event": "expired", "telegram_id": 2105, "reason": "stale_source", "held_at": "2026-10-28T17:48:46.871761+00:00"}
+{"event": "expired", "telegram_id": 2107, "reason": "stale_source", "held_at": "2026-10-28T18:55:39.174563+00:00"}
