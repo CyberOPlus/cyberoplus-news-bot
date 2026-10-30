@@ -369,3 +369,4 @@
 {"event": "expired", "telegram_id": 2202, "reason": "stale_source", "held_at": "2026-10-30T17:20:55.066465+00:00"}
 {"event": "expired", "telegram_id": 2204, "reason": "stale_source", "held_at": "2026-10-30T20:34:40.279781+00:00"}
 {"event": "expired", "telegram_id": 2212, "reason": "stale_source", "held_at": "2026-10-30T21:15:10.479834+00:00"}
+{"event": "editorial_hold", "telegram_id": 2262, "reason": "sensitive_claim_without_source", "held_at": "2026-10-30T21:17:46.838123+00:00"}
