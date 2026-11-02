@@ -2,19 +2,6 @@ name: Publisher watchdog
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: ["Telegram to Facebook publisher"]
-    types: [completed]
-    branches: [main]
-  schedule:
-    # Backup heartbeat. Production polls every 5 minutes; watchdog checks every 10.
-    # It only intervenes when the production heartbeat goes stale.
-    - cron: "4,14,24,34,44,54 * * * *"
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/watchdog-trigger.txt"
 
 permissions:
   actions: write
@@ -26,6 +13,7 @@ concurrency:
 
 jobs:
   watchdog:
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
