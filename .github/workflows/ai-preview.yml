@@ -2,17 +2,13 @@ name: Preview latest Telegram post (NO FACEBOOK)
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/validation-trigger.txt"
 
 permissions:
   contents: read
 
 jobs:
   dry-run-preview:
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 12
 
