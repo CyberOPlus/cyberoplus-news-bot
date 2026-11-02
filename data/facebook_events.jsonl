@@ -425,3 +425,4 @@
 {"event": "expired", "telegram_id": 2325, "reason": "stale_source", "held_at": "2026-11-02T08:40:25.685293+00:00"}
 {"event": "expired", "telegram_id": 2331, "reason": "stale_source", "held_at": "2026-11-02T08:40:25.685668+00:00"}
 {"event": "expired", "telegram_id": 2333, "reason": "stale_source", "held_at": "2026-11-02T08:40:25.685934+00:00"}
+{"event": "expired", "telegram_id": 2335, "reason": "stale_source", "held_at": "2026-11-02T08:58:33.936529+00:00"}
