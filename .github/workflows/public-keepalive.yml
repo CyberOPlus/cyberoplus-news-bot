@@ -2,10 +2,6 @@ name: Public repository keepalive
 
 on:
   workflow_dispatch:
-  schedule:
-    # Public repositories can have scheduled workflows disabled after long
-    # inactivity. One tiny monthly commit keeps the repository active.
-    - cron: "23 3 1 * *"
 
 permissions:
   contents: write
@@ -16,6 +12,7 @@ concurrency:
 
 jobs:
   keepalive:
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
