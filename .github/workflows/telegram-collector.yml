@@ -3,16 +3,6 @@ name: Telegram to Facebook publisher
 
 on:
   workflow_dispatch:
-  schedule:
-    # GitHub Actions' shortest supported scheduled cadence is every 5 minutes.
-    # Backup heartbeat; the worker also queues its successor after a short pause.
-    - cron: "2-59/5 * * * *"
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/production-trigger.txt"
-      - ".github/workflows/telegram-collector.yml"
 
 permissions:
   contents: write
@@ -24,6 +14,7 @@ concurrency:
 
 jobs:
   collect-prepare-publish:
+    if: ${{ false }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
